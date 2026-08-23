@@ -1,0 +1,6 @@
+{
+  "ai_unbound_menu_title": "AI Unbound",
+  "ai_unbound_menu_desc": "Configure the shared queued-task throughput for host-controlled AI.",
+  "ai_unbound_tasks_per_second_title": "AI tasks per second",
+  "ai_unbound_tasks_per_second_desc": "Maximum shared scheduler throughput for due AI tasks. 60 is the original value; higher values reduce queue delays but can increase host CPU load. Changes apply immediately."
+}

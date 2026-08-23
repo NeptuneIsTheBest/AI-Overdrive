@@ -1,0 +1,23 @@
+{
+  "menu_id": "ai_unbound_options",
+  "parent_menu_id": "blt_options",
+  "title": "ai_unbound_menu_title",
+  "description": "ai_unbound_menu_desc",
+  "items": [
+    {
+      "type": "slider",
+      "id": "ai_unbound_tasks_per_second",
+      "title": "ai_unbound_tasks_per_second_title",
+      "description": "ai_unbound_tasks_per_second_desc",
+      "callback": "ai_unbound_set_tasks_per_second",
+      "value": "tasks_per_second",
+      "default_value": 600,
+      "min": 60,
+      "max": 3000,
+      "step": 60,
+      "show_value": true,
+      "display_precision": 0,
+      "priority": 10
+    }
+  ]
+}

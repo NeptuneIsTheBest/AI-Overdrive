@@ -1,0 +1,6 @@
+{
+  "ai_unbound_menu_title": "AI Unbound",
+  "ai_unbound_menu_desc": "调整由主机控制的 AI 共享队列任务吞吐量。",
+  "ai_unbound_tasks_per_second_title": "每秒 AI 任务数",
+  "ai_unbound_tasks_per_second_desc": "所有到期 AI 任务共享的调度吞吐量上限。60 是原版值；提高数值可缩短排队延迟，但会增加主机 CPU 负载。修改后立即生效。"
+}

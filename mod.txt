@@ -1,0 +1,23 @@
+{
+  "name": "AI Unbound",
+  "description": "Raises PAYDAY 2's shared AI queued-task throughput with a configurable host-side limit.",
+  "author": "NeptuneIsTheBest",
+  "contact": "https://github.com/NeptuneIsTheBest",
+  "version": "1.0.0",
+  "blt_version": 2,
+  "color": "0.15 0.65 1",
+  "hooks": [
+    {
+      "hook_id": "lib/managers/menumanager",
+      "script_path": "main.lua"
+    },
+    {
+      "hook_id": "lib/managers/enemymanager",
+      "script_path": "main.lua"
+    },
+    {
+      "hook_id": "lib/managers/localizationmanager",
+      "script_path": "main.lua"
+    }
+  ]
+}
