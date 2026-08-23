@@ -1,4 +1,6 @@
-local AIUnbound = dofile(ModPath .. "lua/ai_unbound.lua")
+dofile(ModPath .. "lua/ai_unbound.lua")
+
+local AIUnbound = _G.AIUnbound
 local required_script = RequiredScript and RequiredScript:lower()
 
 if required_script == "lib/managers/menumanager" then
