@@ -4,8 +4,6 @@ local AIOverdrive = _G.AIOverdrive
 local mrot_y = mrotation.y
 local mvec3_dir = mvector3.direction
 local mvec3_dot = mvector3.dot
-local unit_occluded = Unit.occluded
-local world_in_view_with_options = World.in_view_with_options
 
 AIOverdrive.VERSION = "0.1.0"
 AIOverdrive.TASKS_PER_SECOND_PRESETS = {
@@ -305,6 +303,9 @@ function AIOverdrive:_refresh_gfx_lod_priority_entry(manager, context, i)
     local states = context.states
     local units = context.units
     local unit = units[i]
+    local unit_occluded = context.unit_occluded
+    local world = context.world
+    local world_in_view_with_options = context.world_in_view_with_options
 
     if not states[i] or not alive(unit) then
         return false
@@ -327,7 +328,7 @@ function AIOverdrive:_refresh_gfx_lod_priority_entry(manager, context, i)
     end
 
     if not world_in_view_with_options(
-        World,
+        world,
         context.com[i],
         0,
         120,
@@ -479,6 +480,7 @@ function AIOverdrive:continue_gfx_lod_priority_updates(manager, scratch)
     local imp_wgt_list = gfx_lod_data.prio_weights
     local chk_vis_func = pl_tracker and pl_tracker.check_visibility
     local context = scratch.context
+    local world = World
 
     context.anim_lod = anim_lod
     context.cam_pos = cam_pos
@@ -494,7 +496,10 @@ function AIOverdrive:continue_gfx_lod_priority_updates(manager, scratch)
     context.pl_tracker = pl_tracker
     context.states = states
     context.trackers = trackers
+    context.unit_occluded = Unit.occluded
     context.units = units
+    context.world = world
+    context.world_in_view_with_options = world.in_view_with_options
 
     local max_additional_updates = math.min(
         nr_entries - 1,
