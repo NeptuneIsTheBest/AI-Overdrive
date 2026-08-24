@@ -1,23 +1,66 @@
 {
-  "menu_id": "ai_unbound_options",
+  "menu_id": "ai_overdrive_options",
   "parent_menu_id": "blt_options",
-  "title": "ai_unbound_menu_title",
-  "description": "ai_unbound_menu_desc",
+  "title": "ai_overdrive_menu_title",
+  "description": "ai_overdrive_menu_desc",
   "items": [
     {
-      "type": "slider",
-      "id": "ai_unbound_tasks_per_second",
-      "title": "ai_unbound_tasks_per_second_title",
-      "description": "ai_unbound_tasks_per_second_desc",
-      "callback": "ai_unbound_set_tasks_per_second",
+      "type": "multiple_choice",
+      "id": "ai_overdrive_tasks_per_second",
+      "title": "ai_overdrive_tasks_per_second_title",
+      "description": "ai_overdrive_tasks_per_second_desc",
+      "callback": "ai_overdrive_set_tasks_per_second",
       "value": "tasks_per_second",
       "default_value": 600,
-      "min": 60,
-      "max": 3000,
-      "step": 60,
-      "show_value": true,
-      "display_precision": 0,
+      "items": [
+        "ai_overdrive_tasks_per_second_original",
+        "ai_overdrive_tasks_per_second_light",
+        "ai_overdrive_tasks_per_second_balanced",
+        "ai_overdrive_tasks_per_second_fast",
+        "ai_overdrive_tasks_per_second_maximum"
+      ],
+      "item_values": [60, 300, 600, 1200, 3000],
+      "localized_items": true,
+      "priority": 20
+    },
+    {
+      "type": "toggle",
+      "id": "ai_overdrive_coarse_path_batching_enabled",
+      "title": "ai_overdrive_coarse_path_batching_title",
+      "description": "ai_overdrive_coarse_path_batching_desc",
+      "callback": "ai_overdrive_set_coarse_path_batching_enabled",
+      "value": "coarse_path_batching_enabled",
+      "default_value": true,
+      "priority": 15
+    },
+    {
+      "type": "multiple_choice",
+      "id": "ai_overdrive_shooting_update_rate",
+      "title": "ai_overdrive_shooting_update_rate_title",
+      "description": "ai_overdrive_shooting_update_rate_desc",
+      "callback": "ai_overdrive_set_shooting_update_rate",
+      "value": "shooting_update_rate",
+      "default_value": "auto",
+      "items": [
+        "ai_overdrive_shooting_update_rate_original",
+        "ai_overdrive_shooting_update_rate_15",
+        "ai_overdrive_shooting_update_rate_auto",
+        "ai_overdrive_shooting_update_rate_60",
+        "ai_overdrive_shooting_update_rate_full"
+      ],
+      "item_values": ["original", "15", "auto", "60", "full"],
+      "localized_items": true,
       "priority": 10
+    },
+    {
+      "type": "toggle",
+      "id": "ai_overdrive_every_frame_walking_enabled",
+      "title": "ai_overdrive_every_frame_walking_title",
+      "description": "ai_overdrive_every_frame_walking_desc",
+      "callback": "ai_overdrive_set_every_frame_walking_enabled",
+      "value": "every_frame_walking_enabled",
+      "default_value": true,
+      "priority": 5
     }
   ]
 }

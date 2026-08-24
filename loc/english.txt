@@ -1,6 +1,22 @@
 {
-  "ai_unbound_menu_title": "AI Unbound",
-  "ai_unbound_menu_desc": "Configure the shared queued-task throughput for host-controlled AI.",
-  "ai_unbound_tasks_per_second_title": "AI tasks per second",
-  "ai_unbound_tasks_per_second_desc": "Maximum shared scheduler throughput for due AI tasks. 60 is the original value; higher values reduce queue delays but can increase host CPU load. Changes apply immediately."
+  "ai_overdrive_menu_title": "AI Overdrive",
+  "ai_overdrive_menu_desc": "Make AI react, find routes, shoot, and move more smoothly. If the game starts to stutter, lower a level or turn off an option. Changes apply immediately.",
+  "ai_overdrive_tasks_per_second_title": "AI response speed",
+  "ai_overdrive_tasks_per_second_desc": "Helps AI process actions faster during busy fights. Higher levels respond sooner but may affect game performance.",
+  "ai_overdrive_tasks_per_second_original": "Original",
+  "ai_overdrive_tasks_per_second_light": "Light Boost",
+  "ai_overdrive_tasks_per_second_balanced": "Balanced (Recommended)",
+  "ai_overdrive_tasks_per_second_fast": "Fast",
+  "ai_overdrive_tasks_per_second_maximum": "Maximum",
+  "ai_overdrive_coarse_path_batching_title": "Faster route finding",
+  "ai_overdrive_coarse_path_batching_desc": "Reduces coarse-path queue wait when several AI request routes at once.",
+  "ai_overdrive_shooting_update_rate_title": "Shooting response",
+  "ai_overdrive_shooting_update_rate_desc": "Makes distant AI aim and fire more promptly. Higher levels feel smoother but may affect game performance.",
+  "ai_overdrive_shooting_update_rate_original": "Original",
+  "ai_overdrive_shooting_update_rate_15": "Light",
+  "ai_overdrive_shooting_update_rate_auto": "Adaptive (Recommended)",
+  "ai_overdrive_shooting_update_rate_60": "Smooth",
+  "ai_overdrive_shooting_update_rate_full": "Maximum",
+  "ai_overdrive_every_frame_walking_title": "Smoother movement",
+  "ai_overdrive_every_frame_walking_desc": "Keeps enemies, civilians, and AI teammates moving smoothly. Turn this off if performance suffers."
 }

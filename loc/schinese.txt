@@ -1,6 +1,22 @@
 {
-  "ai_unbound_menu_title": "AI Unbound",
-  "ai_unbound_menu_desc": "调整由主机控制的 AI 共享队列任务吞吐量。",
-  "ai_unbound_tasks_per_second_title": "每秒 AI 任务数",
-  "ai_unbound_tasks_per_second_desc": "所有到期 AI 任务共享的调度吞吐量上限。60 是原版值；提高数值可缩短排队延迟，但会增加主机 CPU 负载。修改后立即生效。"
+  "ai_overdrive_menu_title": "AI Overdrive",
+  "ai_overdrive_menu_desc": "让 AI 反应更及时、寻路更迅速、动作更流畅。若游戏性能下降，请降低档位或关闭部分选项；更改立即生效。",
+  "ai_overdrive_tasks_per_second_title": "AI 反应速度",
+  "ai_overdrive_tasks_per_second_desc": "让 AI 在激战中更快处理行动。档位越高反应越及时，但也更容易影响游戏流畅度。",
+  "ai_overdrive_tasks_per_second_original": "原版",
+  "ai_overdrive_tasks_per_second_light": "轻度加速",
+  "ai_overdrive_tasks_per_second_balanced": "均衡（推荐）",
+  "ai_overdrive_tasks_per_second_fast": "快速",
+  "ai_overdrive_tasks_per_second_maximum": "极致",
+  "ai_overdrive_coarse_path_batching_title": "更快找到路线",
+  "ai_overdrive_coarse_path_batching_desc": "多个 AI 同时请求路线时，减少粗略寻路的排队等待。",
+  "ai_overdrive_shooting_update_rate_title": "射击反应",
+  "ai_overdrive_shooting_update_rate_desc": "让远处 AI 更及时地瞄准和开火。档位越高越流畅，但也更容易影响游戏性能。",
+  "ai_overdrive_shooting_update_rate_original": "原版",
+  "ai_overdrive_shooting_update_rate_15": "轻量",
+  "ai_overdrive_shooting_update_rate_auto": "自适应（推荐）",
+  "ai_overdrive_shooting_update_rate_60": "流畅",
+  "ai_overdrive_shooting_update_rate_full": "极致",
+  "ai_overdrive_every_frame_walking_title": "移动更流畅",
+  "ai_overdrive_every_frame_walking_desc": "让敌人、平民和 AI 队友的移动保持顺畅。性能不足时可关闭。"
 }
