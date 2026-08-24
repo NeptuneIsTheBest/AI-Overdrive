@@ -771,9 +771,9 @@ function AIOverdrive:resolved_shooting_update_hz(t)
 end
 
 function AIOverdrive:shooting_action_phase(action)
-    local unit_key = action._unit:key()
+    local unit_id = action._unit:id()
 
-    return math.abs(unit_key % self.SHOOTING_ACTION_PHASE_MODULUS)
+    return math.abs(unit_id % self.SHOOTING_ACTION_PHASE_MODULUS)
         / self.SHOOTING_ACTION_PHASE_MODULUS
 end
 
