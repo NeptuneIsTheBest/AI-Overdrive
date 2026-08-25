@@ -34,7 +34,8 @@ A lightweight enhancement mod for **PAYDAY 2** AI.
            │   ├── english.txt
            │   └── schinese.txt
            └── lua/
-               └── ai_overdrive.lua
+               ├── ai_overdrive.lua
+               └── ai_overdrive_runtime.lua
    ```
 
 5. Launch the game. SuperBLT will load AI Overdrive automatically.
@@ -71,6 +72,10 @@ Most AI decisions are controlled by the host, so the host's AI response, action-
 Players without the mod keep the original local shooting and movement behavior without interfering with the host's AI settings.
 
 ## How It Works
+
+### Loading lifecycle
+
+SuperBLT can invoke a script hook every time the matching game module is requested, including repeated requests for a module Lua has already cached. AI Overdrive loads its lightweight settings, menu, and localization core once during menu setup, then defers gameplay code until the first hooked gameplay class is available. The gameplay runtime is also loaded once, and every target class is patched at most once while retaining its original per-class hook timing.
 
 ### Queued work
 
