@@ -43,14 +43,6 @@ AIOverdrive.DEFAULT_FRAME_DELTA_TIME = 1 / 60
 AIOverdrive.mod_path = ModPath
 AIOverdrive.save_path = SavePath .. "ai_overdrive.json"
 AIOverdrive.settings = AIOverdrive.settings or {}
-AIOverdrive._delayed_callback_snapshot_stacks = AIOverdrive._delayed_callback_snapshot_stacks
-    or setmetatable({}, { __mode = "k" })
-AIOverdrive._coarse_search_frame_states = AIOverdrive._coarse_search_frame_states
-    or setmetatable({}, { __mode = "k" })
-AIOverdrive._shooting_action_states = AIOverdrive._shooting_action_states
-    or setmetatable({}, { __mode = "k" })
-AIOverdrive._npc_weapon_shoot_actions = AIOverdrive._npc_weapon_shoot_actions
-    or setmetatable({}, { __mode = "k" })
 AIOverdrive._npc_weapon_trigger_patch_targets = AIOverdrive._npc_weapon_trigger_patch_targets
     or setmetatable({}, { __mode = "k" })
 AIOverdrive._shooting_settings_revision = AIOverdrive._shooting_settings_revision or 0
@@ -233,8 +225,6 @@ function AIOverdrive:apply_to_enemy_manager(enemy_manager, reset_queue_buffer)
 end
 
 function AIOverdrive:patch_enemy_manager_delayed_callbacks(enemy_manager)
-    local ai_overdrive = self
-
     Hooks:PreHook(
         enemy_manager,
         "_update_queued_tasks",
@@ -244,11 +234,12 @@ function AIOverdrive:patch_enemy_manager_delayed_callbacks(enemy_manager)
                 return
             end
 
-            local snapshot_stack = ai_overdrive._delayed_callback_snapshot_stacks[manager]
+            local snapshot_stack =
+                manager._ai_overdrive_delayed_callback_snapshot_stack
 
             if not snapshot_stack then
                 snapshot_stack = {}
-                ai_overdrive._delayed_callback_snapshot_stacks[manager] = snapshot_stack
+                manager._ai_overdrive_delayed_callback_snapshot_stack = snapshot_stack
             end
 
             local eligible_callbacks = {}
@@ -276,7 +267,8 @@ function AIOverdrive:patch_enemy_manager_delayed_callbacks(enemy_manager)
         "_update_queued_tasks",
         "AIOverdrive_EnemyManager_UpdateQueuedTasks_DrainDelayedCallbacks",
         function(manager, t)
-            local snapshot_stack = ai_overdrive._delayed_callback_snapshot_stacks[manager]
+            local snapshot_stack =
+                manager._ai_overdrive_delayed_callback_snapshot_stack
 
             if not snapshot_stack then
                 return
@@ -284,8 +276,8 @@ function AIOverdrive:patch_enemy_manager_delayed_callbacks(enemy_manager)
 
             local eligible_callbacks = table.remove(snapshot_stack)
 
-            if #snapshot_stack == 0 then
-                ai_overdrive._delayed_callback_snapshot_stacks[manager] = nil
+            if not eligible_callbacks then
+                return
             end
 
             -- A callback can reorder the queue, so select from the live queue after every call.
@@ -928,14 +920,14 @@ function AIOverdrive:reset_auto_shooting_frame_time()
     self._auto_shooting_smoothed_dt = nil
 end
 
-function AIOverdrive:sample_auto_shooting_frame_time(t)
+function AIOverdrive:sample_auto_shooting_frame_time(frame_t, frame_delta_time)
     local last_sample_t = self._auto_shooting_last_sample_t
 
-    if t == last_sample_t then
+    if frame_t == last_sample_t then
         return self._auto_shooting_smoothed_dt or self.DEFAULT_FRAME_DELTA_TIME
     end
 
-    local dt = TimerManager:wall():delta_time()
+    local dt = frame_delta_time or TimerManager:wall():delta_time()
 
     if dt <= 0 then
         dt = self._auto_shooting_smoothed_dt or self.DEFAULT_FRAME_DELTA_TIME
@@ -952,21 +944,57 @@ function AIOverdrive:sample_auto_shooting_frame_time(t)
     end
 
     self._auto_shooting_smoothed_dt = smoothed_dt
-    self._auto_shooting_last_sample_t = t
+    self._auto_shooting_last_sample_t = frame_t
 
     return smoothed_dt
 end
 
-function AIOverdrive:resolved_shooting_update_hz(t)
-    local update_rate = self:shooting_update_rate()
+function AIOverdrive:resolve_shooting_update_for_frame(frame_t)
+    local revision = self._shooting_settings_revision
+    local resolution = self._shooting_frame_resolution
 
-    if update_rate == "auto" then
-        return self:calculate_auto_shooting_update_hz(
-            self:sample_auto_shooting_frame_time(t)
-        )
+    if resolution
+        and resolution.frame_t == frame_t
+        and resolution.revision == revision
+    then
+        return resolution
     end
 
-    return self.SHOOTING_UPDATE_RATES[update_rate]
+    local update_rate = self:shooting_update_rate()
+
+    if not resolution then
+        resolution = {}
+        self._shooting_frame_resolution = resolution
+    end
+
+    resolution.frame_t = frame_t
+    resolution.revision = revision
+    resolution.update_rate = update_rate
+    resolution.wall_t = nil
+    resolution.target_hz = nil
+    resolution.interval = nil
+
+    if update_rate == "original" or update_rate == "full" then
+        return resolution
+    end
+
+    local wall_timer = TimerManager:wall()
+    local target_hz
+
+    resolution.wall_t = wall_timer:time()
+
+    if update_rate == "auto" then
+        target_hz = self:calculate_auto_shooting_update_hz(
+            self:sample_auto_shooting_frame_time(frame_t, wall_timer:delta_time())
+        )
+    else
+        target_hz = self.SHOOTING_UPDATE_RATES[update_rate]
+    end
+
+    resolution.target_hz = target_hz
+    resolution.interval = 1 / target_hz
+
+    return resolution
 end
 
 function AIOverdrive:shooting_action_phase(action)
@@ -997,9 +1025,8 @@ function AIOverdrive:prime_lod_action_update(action, vis_state, threshold_multip
     return true
 end
 
-function AIOverdrive:prepare_shooting_action_update(action, t, vis_state, target_hz)
-    local interval = 1 / target_hz
-    local state = self._shooting_action_states[action]
+function AIOverdrive:prepare_shooting_action_update(action, t, vis_state, interval)
+    local state = action._ai_overdrive_shooting_state
     local revision = self._shooting_settings_revision
 
     if not state
@@ -1012,7 +1039,7 @@ function AIOverdrive:prepare_shooting_action_update(action, t, vis_state, target
             interval = interval,
             next_update_t = t + interval * phase
         }
-        self._shooting_action_states[action] = state
+        action._ai_overdrive_shooting_state = state
     else
         if interval < state.interval
             and state.next_update_t > t + interval
@@ -1062,9 +1089,9 @@ function AIOverdrive:begin_npc_weapon_shoot_action(action)
     if type(action._autofiring) == "number"
         and type(action._autoshots_fired) == "number"
     then
-        self._npc_weapon_shoot_actions[weapon_base] = action
-    elseif self._npc_weapon_shoot_actions[weapon_base] == action then
-        self._npc_weapon_shoot_actions[weapon_base] = nil
+        weapon_base._ai_overdrive_shoot_action = action
+    elseif weapon_base._ai_overdrive_shoot_action == action then
+        weapon_base._ai_overdrive_shoot_action = nil
     end
 end
 
@@ -1072,9 +1099,9 @@ function AIOverdrive:end_npc_weapon_shoot_action(action)
     local weapon_base = action._weapon_base
 
     if weapon_base
-        and self._npc_weapon_shoot_actions[weapon_base] == action
+        and weapon_base._ai_overdrive_shoot_action == action
     then
-        self._npc_weapon_shoot_actions[weapon_base] = nil
+        weapon_base._ai_overdrive_shoot_action = nil
     end
 end
 
@@ -1095,7 +1122,7 @@ end
 
 function AIOverdrive:npc_weapon_catchup_limit(weapon_base)
     local shot_limit = self.MAX_NPC_WEAPON_CATCHUP_SHOTS
-    local shoot_action = self._npc_weapon_shoot_actions[weapon_base]
+    local shoot_action = weapon_base._ai_overdrive_shoot_action
 
     if not shoot_action
         or shoot_action._weapon_base ~= weapon_base
@@ -1150,7 +1177,7 @@ function AIOverdrive:catch_up_npc_weapon_trigger(weapon_base, default_fire_rate,
 
     if shoot_action
         and shots_fired > 1
-        and self._npc_weapon_shoot_actions[weapon_base] == shoot_action
+        and weapon_base._ai_overdrive_shoot_action == shoot_action
         and type(shoot_action._autoshots_fired) == "number"
     then
         shoot_action._autoshots_fired = shoot_action._autoshots_fired + shots_fired - 1
@@ -1218,8 +1245,10 @@ function AIOverdrive:patch_cop_action_shoot(cop_action_shoot)
         cop_action_shoot,
         "update",
         "AIOverdrive_CopActionShoot_Update",
-        function(action)
-            if not ai_overdrive:accelerated_shooting_enabled() then
+        function(action, t)
+            local resolution = ai_overdrive:resolve_shooting_update_for_frame(t)
+
+            if resolution.update_rate == "original" then
                 return
             end
 
@@ -1227,22 +1256,17 @@ function AIOverdrive:patch_cop_action_shoot(cop_action_shoot)
 
             local vis_state = action._ext_base:lod_stage() or 4
 
-            local update_rate = ai_overdrive:shooting_update_rate()
-
-            if update_rate == "full" then
+            if resolution.update_rate == "full" then
                 ai_overdrive:prime_lod_action_update(action, vis_state, 3)
 
                 return
             end
 
-            local wall_t = TimerManager:wall():time()
-            local target_hz = ai_overdrive:resolved_shooting_update_hz(wall_t)
-
             ai_overdrive:prepare_shooting_action_update(
                 action,
-                wall_t,
+                resolution.wall_t,
                 vis_state,
-                target_hz
+                resolution.interval
             )
         end
     )
@@ -1327,7 +1351,7 @@ function AIOverdrive:patch_navigation_manager_coarse_searches(navigation_manager
         "_commence_coarce_searches",
         "AIOverdrive_NavigationManager_CommenceCoarseSearches_Start",
         function(manager)
-            local frame_state = ai_overdrive._coarse_search_frame_states[manager]
+            local frame_state = manager._ai_overdrive_coarse_search_frame_state
 
             if frame_state then
                 frame_state.started_at = nil
@@ -1348,7 +1372,7 @@ function AIOverdrive:patch_navigation_manager_coarse_searches(navigation_manager
 
             if not frame_state then
                 frame_state = {}
-                ai_overdrive._coarse_search_frame_states[manager] = frame_state
+                manager._ai_overdrive_coarse_search_frame_state = frame_state
             end
 
             frame_state.started_at = ai_overdrive:coarse_search_clock()
@@ -1361,7 +1385,7 @@ function AIOverdrive:patch_navigation_manager_coarse_searches(navigation_manager
         "_commence_coarce_searches",
         "AIOverdrive_NavigationManager_CommenceCoarseSearches_Finish",
         function(manager)
-            local frame_state = ai_overdrive._coarse_search_frame_states[manager]
+            local frame_state = manager._ai_overdrive_coarse_search_frame_state
 
             if not frame_state or not frame_state.started_at then
                 return
