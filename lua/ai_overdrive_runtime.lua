@@ -1170,25 +1170,6 @@ function AIOverdrive:patch_cop_action_shoot(cop_action_shoot)
     )
 end
 
-function AIOverdrive:patch_cop_action_walk(cop_action_walk)
-    local ai_overdrive = self
-
-    Hooks:PreHook(
-        cop_action_walk,
-        "update",
-        "AIOverdrive_CopActionWalk_Update",
-        function(action)
-            if not ai_overdrive:every_frame_walking_enabled() then
-                return
-            end
-
-            local vis_state = action._ext_base:lod_stage() or 4
-
-            ai_overdrive:prime_lod_action_update(action, vis_state, 1)
-        end
-    )
-end
-
 function AIOverdrive:current_frame_delta_time()
     local dt = TimerManager:wall():delta_time()
 

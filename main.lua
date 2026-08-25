@@ -97,6 +97,10 @@ else
     elseif required_script == "lib/units/enemies/cop/actions/upper_body/copactionshoot" then
         AIOverdrive:patch_cop_action_shoot(CopActionShoot)
     elseif required_script == "lib/units/enemies/cop/actions/lower_body/copactionwalk" then
+        if not AIOverdrive._walk_runtime_loaded then
+            dofile(AIOverdrive.mod_path .. "lua/ai_overdrive_walk.lua")
+        end
+
         AIOverdrive:patch_cop_action_walk(CopActionWalk)
     elseif required_script == "lib/units/weapons/newnpcraycastweaponbase" then
         AIOverdrive:patch_new_npc_raycast_weapon_base(NewNPCRaycastWeaponBase)

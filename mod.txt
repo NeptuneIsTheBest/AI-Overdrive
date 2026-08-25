@@ -3,7 +3,7 @@
   "description": "A lightweight enhancement mod for PAYDAY 2 AI.",
   "author": "NeptuneIsTheBest",
   "contact": "https://github.com/NeptuneIsTheBest",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "blt_version": 2,
   "color": "0.15 0.65 1",
   "hooks": [

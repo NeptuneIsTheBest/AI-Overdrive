@@ -35,7 +35,8 @@ A lightweight enhancement mod for **PAYDAY 2** AI.
            │   └── schinese.txt
            └── lua/
                ├── ai_overdrive.lua
-               └── ai_overdrive_runtime.lua
+               ├── ai_overdrive_runtime.lua
+               └── ai_overdrive_walk.lua
    ```
 
 5. Launch the game. SuperBLT will load AI Overdrive automatically.
@@ -75,7 +76,7 @@ Players without the mod keep the original local shooting and movement behavior w
 
 ### Loading lifecycle
 
-SuperBLT can invoke a script hook every time the matching game module is requested, including repeated requests for a module Lua has already cached. AI Overdrive loads its lightweight settings, menu, and localization core once during menu setup, then defers gameplay code until the first hooked gameplay class is available. The gameplay runtime is also loaded once, and every target class is patched at most once while retaining its original per-class hook timing.
+SuperBLT can invoke a script hook every time the matching game module is requested, including repeated requests for a module Lua has already cached. AI Overdrive loads its lightweight settings, menu, and localization core once during menu setup, then defers gameplay code until the first hooked gameplay class is available. The gameplay runtime is also loaded once, the specialized walking runtime is deferred until `CopActionWalk` is available, and every target class is patched at most once while retaining its original per-class hook timing.
 
 ### Queued work
 
@@ -109,16 +110,16 @@ Shooting actions normally update every frame at visibility LOD 1, then every 6, 
 
 With any accelerated **Shooting response** setting, both current and legacy NPC raycast weapons fire overdue automatic-weapon cycles the next time their shooting action runs. Catch-up is limited to eight shots per call; older debt beyond that cap is discarded while the next firing time stays aligned to the weapon's cadence. Empty magazines and failed shots stop the loop immediately, and short bursts still stop after their originally selected number of rounds.
 
-Walking actions normally update every 1, 2, 3, or 4 frames depending on visibility. **Smoother movement** advances only the original skip counter before calling the original function, leaving the real LOD, path, elapsed-time, and animation logic intact. The option applies to enemies, civilians, escorts, and AI teammates on every installed peer.
+Walking actions normally update every 1, 2, 3, or 4 frames depending on visibility. **Smoother movement** keeps the same real LOD, elapsed-time, path, rotation, animation, stop, and navigation-link behavior while running the ordinary walking update every frame. Its optimized path reuses per-action footstep and next-position vectors and mutable module scratch vectors, avoiding the five short-lived vector results that the base implementation can produce during a steady movement update. Turning the option off delegates both walking and path advancement to the captured base-game functions. The option applies to enemies, civilians, escorts, and AI teammates on every installed peer.
 
 ## Compatibility
 
-AI Overdrive uses SuperBLT hooks around the enemy manager, navigation manager, attention objects, `CopLogicBase`, `CopBrain`, arrest logic, shooting actions, walking actions, and NPC weapons. It minimally replaces `EnemyManager._update_gfx_lod`, `AIAttentionObject.get_attention`, `CopLogicBase.queue_task`, `NewNPCRaycastWeaponBase.trigger_held`, and `NPCRaycastWeaponBase.trigger_held`; action completion and arrest entry use post-hooks, while the scheduler update, path-search algorithm, and action update functions remain intact.
+AI Overdrive uses SuperBLT hooks around the enemy manager, navigation manager, attention objects, `CopLogicBase`, `CopBrain`, arrest logic, shooting actions, walking actions, and NPC weapons. It minimally replaces `EnemyManager._update_gfx_lod`, `AIAttentionObject.get_attention`, `CopLogicBase.queue_task`, the ordinary `CopActionWalk` update/path interpolation functions, `NewNPCRaycastWeaponBase.trigger_held`, and `NPCRaycastWeaponBase.trigger_held`; action completion and arrest entry use post-hooks, while the shooting scheduler and coarse path-search algorithm remain intact.
 
 Conflicts may occur with mods that:
 
 - Change `EnemyManager._tick_rate`
-- Replace `_update_queued_tasks`, `_update_gfx_lod`, `AIAttentionObject.get_attention`, `CopLogicBase.queue_task`, `CopBrain.action_complete_clbk`, `CopLogicArrest.enter`, `CopActionShoot.update`, `CopActionWalk.update`, or either NPC weapon `trigger_held` implementation
+- Replace `_update_queued_tasks`, `_update_gfx_lod`, `AIAttentionObject.get_attention`, `CopLogicBase.queue_task`, `CopBrain.action_complete_clbk`, `CopLogicArrest.enter`, `CopActionShoot.update`, `CopActionWalk.update`, `CopActionWalk._nav_chk_walk`, `CopActionWalk._walk_spline`, or either NPC weapon `trigger_held` implementation
 - Change delayed-callback ordering, visibility-LOD priority arrays, coarse-search queue consumption, or action `_skipped_frames`
 - Mutate attention settings without using the standard attention-data methods
 
