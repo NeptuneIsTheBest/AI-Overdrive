@@ -3,7 +3,7 @@
   "description": "A lightweight enhancement mod for PAYDAY 2 AI.",
   "author": "NeptuneIsTheBest",
   "contact": "https://github.com/NeptuneIsTheBest",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "blt_version": 2,
   "color": "0.15 0.65 1",
   "hooks": [
@@ -25,6 +25,10 @@
     },
     {
       "hook_id": "lib/units/enemies/cop/logics/coplogicbase",
+      "script_path": "main.lua"
+    },
+    {
+      "hook_id": "lib/units/enemies/cop/copbrain",
       "script_path": "main.lua"
     },
     {

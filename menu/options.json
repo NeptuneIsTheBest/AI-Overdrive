@@ -25,6 +25,16 @@
     },
     {
       "type": "toggle",
+      "id": "ai_overdrive_seamless_action_transitions_enabled",
+      "title": "ai_overdrive_seamless_action_transitions_title",
+      "description": "ai_overdrive_seamless_action_transitions_desc",
+      "callback": "ai_overdrive_set_seamless_action_transitions_enabled",
+      "value": "seamless_action_transitions_enabled",
+      "default_value": true,
+      "priority": 18
+    },
+    {
+      "type": "toggle",
       "id": "ai_overdrive_coarse_path_batching_enabled",
       "title": "ai_overdrive_coarse_path_batching_title",
       "description": "ai_overdrive_coarse_path_batching_desc",

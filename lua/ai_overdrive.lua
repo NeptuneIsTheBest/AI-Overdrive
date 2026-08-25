@@ -5,7 +5,7 @@ local mrot_y = mrotation.y
 local mvec3_dir = mvector3.direction
 local mvec3_dot = mvector3.dot
 
-AIOverdrive.VERSION = "0.1.0"
+AIOverdrive.VERSION = "0.2.0"
 AIOverdrive.TASKS_PER_SECOND_PRESETS = {
     60,
     300,
@@ -29,6 +29,8 @@ AIOverdrive.NEW_NPC_WEAPON_DEFAULT_FIRE_RATE = 0.1
 AIOverdrive.LEGACY_NPC_WEAPON_DEFAULT_FIRE_RATE = 1
 AIOverdrive.DEFAULT_EVERY_FRAME_WALKING_ENABLED = true
 AIOverdrive.DEFAULT_COARSE_PATH_BATCHING_ENABLED = true
+AIOverdrive.DEFAULT_SEAMLESS_ACTION_TRANSITIONS_ENABLED = true
+AIOverdrive.ACTION_TRANSITION_EPSILON = 0.000001
 AIOverdrive.COARSE_SEARCH_BUDGET_RATIO = 0.05
 AIOverdrive.MIN_COARSE_SEARCH_BUDGET = 0.00025
 AIOverdrive.MAX_COARSE_SEARCH_BUDGET = 0.0015
@@ -121,6 +123,18 @@ function AIOverdrive:coarse_path_batching_enabled()
     return self.settings.coarse_path_batching_enabled
 end
 
+function AIOverdrive:sanitize_seamless_action_transitions_enabled(value)
+    if type(value) == "boolean" then
+        return value
+    end
+
+    return self.DEFAULT_SEAMLESS_ACTION_TRANSITIONS_ENABLED
+end
+
+function AIOverdrive:seamless_action_transitions_enabled()
+    return self.settings.seamless_action_transitions_enabled
+end
+
 function AIOverdrive:tick_rate()
     return 1 / self:tasks_per_second()
 end
@@ -156,6 +170,10 @@ function AIOverdrive:load_settings()
     self.settings.coarse_path_batching_enabled = self:sanitize_coarse_path_batching_enabled(
         loaded_settings and loaded_settings.coarse_path_batching_enabled
     )
+    self.settings.seamless_action_transitions_enabled =
+        self:sanitize_seamless_action_transitions_enabled(
+            loaded_settings and loaded_settings.seamless_action_transitions_enabled
+        )
 
     return self.settings
 end
@@ -165,7 +183,8 @@ function AIOverdrive:save_settings()
         tasks_per_second = self:tasks_per_second(),
         shooting_update_rate = self:shooting_update_rate(),
         every_frame_walking_enabled = self:every_frame_walking_enabled(),
-        coarse_path_batching_enabled = self:coarse_path_batching_enabled()
+        coarse_path_batching_enabled = self:coarse_path_batching_enabled(),
+        seamless_action_transitions_enabled = self:seamless_action_transitions_enabled()
     }
     local encoded = json.encode(data)
 
@@ -700,6 +719,7 @@ function AIOverdrive:patch_cop_logic_base_queue_task(cop_logic_base)
         return
     end
 
+    local ai_overdrive = self
     local original_queue_task = Hooks:GetFunction(cop_logic_base, "queue_task")
 
     Hooks:OverrideFunction(cop_logic_base, "queue_task", function(internal_data, id, func, data, exec_t, asap)
@@ -709,10 +729,189 @@ function AIOverdrive:patch_cop_logic_base_queue_task(cop_logic_base)
             cop_logic_base.unqueue_task(internal_data, id)
         end
 
+        if ai_overdrive:is_logic_decision_update(func, data) then
+            internal_data._ai_overdrive_decision_update_id = id
+        end
+
         return original_queue_task(internal_data, id, func, data, exec_t, asap)
     end)
 
     self._cop_logic_base_queue_task_patch_target = cop_logic_base
+end
+
+function AIOverdrive:is_logic_decision_update(func, data)
+    if type(data) ~= "table" or type(data.logic) ~= "table" then
+        return false
+    end
+
+    -- Dormant brains normally drive decisions through queued_update. Snipers
+    -- fold their movement and aiming decisions into their detection task.
+    if type(data.logic.queued_update) == "function"
+        and func == data.logic.queued_update
+    then
+        return true
+    end
+
+    return data.name == "sniper"
+        and type(data.logic._upd_enemy_detection) == "function"
+        and func == data.logic._upd_enemy_detection
+end
+
+function AIOverdrive:action_transition_due_t(t)
+    return t - self.ACTION_TRANSITION_EPSILON
+end
+
+function AIOverdrive:is_natural_action_completion(action)
+    return action
+        and type(action.expired) == "function"
+        and action:expired()
+        and true
+        or false
+end
+
+function AIOverdrive:remove_ordinary_action_wait(logic_data, action, t)
+    local internal_data = logic_data and logic_data.internal_data
+
+    if not internal_data or not action or type(action.type) ~= "function" then
+        return false
+    end
+
+    local action_type = action:type()
+    local logic_name = logic_data.name
+    local changed = false
+    local due_t = self:action_transition_due_t(t)
+
+    -- These fields only space ordinary arrest, flee, and travel actions. Keep
+    -- ability cooldowns, path-failure backoff, and scripted timeouts untouched.
+    if logic_name == "arrest" and (action_type == "walk" or action_type == "act") then
+        if internal_data.next_action_delay_t ~= nil then
+            internal_data.next_action_delay_t = due_t
+            changed = true
+        end
+    elseif logic_name == "flee" and action_type == "walk" then
+        if internal_data.next_action_t ~= nil then
+            internal_data.next_action_t = due_t
+            changed = true
+        end
+
+        if internal_data.cover_leave_t ~= nil then
+            internal_data.cover_leave_t = nil
+            changed = true
+        end
+    elseif logic_name == "travel"
+        and action_type == "walk"
+        and internal_data.cover_leave_t ~= nil
+    then
+        internal_data.cover_leave_t = nil
+        changed = true
+    end
+
+    return changed
+end
+
+function AIOverdrive:remove_initial_arrest_wait(data, t)
+    local internal_data = data and data.internal_data
+
+    if data
+        and data.name == "arrest"
+        and internal_data
+        and internal_data.next_action_delay_t ~= nil
+    then
+        internal_data.next_action_delay_t = self:action_transition_due_t(t)
+
+        return true
+    end
+
+    return false
+end
+
+function AIOverdrive:on_ai_action_complete(brain, action)
+    if not self:seamless_action_transitions_enabled() or not Network:is_server() then
+        return false
+    end
+
+    local logic_data = brain and brain._logic_data
+
+    if not logic_data
+        or logic_data.logic ~= brain._current_logic
+        or not logic_data.internal_data
+        or logic_data.internal_data.exiting
+    then
+        return false
+    end
+
+    local t = TimerManager:game():time()
+
+    self:remove_ordinary_action_wait(logic_data, action, t)
+
+    if not self:is_natural_action_completion(action) then
+        return false
+    end
+
+    local internal_data = logic_data.internal_data
+    local task_id = internal_data._ai_overdrive_decision_update_id
+    local queued_tasks = internal_data.queued_tasks
+
+    if not task_id or not queued_tasks or not queued_tasks[task_id] then
+        return false
+    end
+
+    local enemy_manager = managers and managers.enemy
+
+    if not enemy_manager or type(enemy_manager.update_queue_task) ~= "function" then
+        return false
+    end
+
+    enemy_manager:update_queue_task(
+        task_id,
+        nil,
+        nil,
+        self:action_transition_due_t(t),
+        nil,
+        true
+    )
+
+    return true
+end
+
+function AIOverdrive:on_cop_logic_arrest_enter(data)
+    if not self:seamless_action_transitions_enabled() or not Network:is_server() then
+        return false
+    end
+
+    return self:remove_initial_arrest_wait(data, TimerManager:game():time())
+end
+
+function AIOverdrive:patch_cop_brain_action_transitions(cop_brain, cop_logic_arrest)
+    local ai_overdrive = self
+
+    if self._cop_brain_action_transition_patch_target ~= cop_brain then
+        Hooks:PostHook(
+            cop_brain,
+            "action_complete_clbk",
+            "AIOverdrive_CopBrain_ActionComplete",
+            function(brain, action)
+                ai_overdrive:on_ai_action_complete(brain, action)
+            end
+        )
+
+        self._cop_brain_action_transition_patch_target = cop_brain
+    end
+
+    if cop_logic_arrest
+        and self._cop_logic_arrest_transition_patch_target ~= cop_logic_arrest
+    then
+        Hooks:PostHook(
+            cop_logic_arrest,
+            "enter",
+            "AIOverdrive_CopLogicArrest_Enter",
+            function(data)
+                ai_overdrive:on_cop_logic_arrest_enter(data)
+            end
+        )
+
+        self._cop_logic_arrest_transition_patch_target = cop_logic_arrest
+    end
 end
 
 function AIOverdrive:calculate_auto_shooting_update_hz(frame_delta_time)
@@ -1256,6 +1455,14 @@ function AIOverdrive:set_coarse_path_batching_enabled(value)
     self:save_settings()
 
     return self.settings.coarse_path_batching_enabled
+end
+
+function AIOverdrive:set_seamless_action_transitions_enabled(value)
+    self.settings.seamless_action_transitions_enabled =
+        self:sanitize_seamless_action_transitions_enabled(value)
+    self:save_settings()
+
+    return self.settings.seamless_action_transitions_enabled
 end
 
 function AIOverdrive:load_localization(localization_manager)

@@ -8,6 +8,8 @@
   "ai_overdrive_tasks_per_second_balanced": "Balanced (Recommended)",
   "ai_overdrive_tasks_per_second_fast": "Fast",
   "ai_overdrive_tasks_per_second_maximum": "Maximum",
+  "ai_overdrive_seamless_action_transitions_title": "Seamless action transitions",
+  "ai_overdrive_seamless_action_transitions_desc": "Lets AI make its next decision as soon as an action ends and removes pauses between ordinary movement segments. Animation lengths and special-ability cooldowns stay unchanged.",
   "ai_overdrive_coarse_path_batching_title": "Faster route finding",
   "ai_overdrive_coarse_path_batching_desc": "Reduces coarse-path queue wait when several AI request routes at once.",
   "ai_overdrive_shooting_update_rate_title": "Shooting response",

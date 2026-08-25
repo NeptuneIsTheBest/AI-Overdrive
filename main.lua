@@ -21,6 +21,10 @@ if required_script == "lib/managers/menumanager" then
             AIOverdrive:set_coarse_path_batching_enabled(item:value() == "on")
         end
 
+        MenuCallbackHandler.ai_overdrive_set_seamless_action_transitions_enabled = function(_, item)
+            AIOverdrive:set_seamless_action_transitions_enabled(item:value() == "on")
+        end
+
         MenuHelper:LoadFromJsonFile(
             AIOverdrive.mod_path .. "menu/options.json",
             AIOverdrive,
@@ -45,6 +49,8 @@ elseif required_script == "lib/units/props/aiattentionobject" then
     AIOverdrive:patch_ai_attention_object(AIAttentionObject)
 elseif required_script == "lib/units/enemies/cop/logics/coplogicbase" then
     AIOverdrive:patch_cop_logic_base_queue_task(CopLogicBase)
+elseif required_script == "lib/units/enemies/cop/copbrain" then
+    AIOverdrive:patch_cop_brain_action_transitions(CopBrain, CopLogicArrest)
 elseif required_script == "lib/units/enemies/cop/actions/upper_body/copactionshoot" then
     AIOverdrive:patch_cop_action_shoot(CopActionShoot)
 elseif required_script == "lib/units/enemies/cop/actions/lower_body/copactionwalk" then

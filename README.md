@@ -5,6 +5,7 @@ A lightweight enhancement mod for **PAYDAY 2** AI.
 ## What It Improves
 
 - Helps enemies and teammates keep up when a lot is happening at once
+- Lets AI move into its next decision as soon as an action ends
 - Reduces pauses while AI waits to find a route
 - Makes distant AI shooting feel more responsive
 - Keeps movement looking smoother across enemies, civilians, escorts, and AI teammates
@@ -47,22 +48,23 @@ Settings apply immediately and persist between game sessions.
 | Setting | Default | Behavior |
 | --- | ---: | --- |
 | AI response speed | Balanced (Recommended) | Helps AI process actions sooner during busy fights |
+| Seamless action transitions | On | Removes decision gaps and pauses between ordinary movement segments |
 | Faster route finding | On | Reduces the time AI spends waiting for a route |
 | Shooting response | Adaptive (Recommended) | Makes distant AI aim and fire more promptly |
 | Smoother movement | On | Keeps enemies, civilians, and AI teammates moving smoothly |
 
-Choosing **Original** restores the base-game behavior for that setting.
+Choosing **Original**, or turning an option off, restores the base-game behavior for that setting.
 
 > [!WARNING]
 > Start with the recommended defaults. If the game begins to stutter, lower **AI response speed** or **Shooting response**, or turn off one of the optional improvements.
 
 ## Multiplayer
 
-Most AI decisions are controlled by the host, so the host's AI response and route-finding settings benefit everyone. Shooting and movement actions are also simulated locally by each peer, so those improvements use each installed player's own settings.
+Most AI decisions are controlled by the host, so the host's AI response, action-transition, and route-finding settings benefit everyone. Shooting and movement actions are also simulated locally by each peer, so those improvements use each installed player's own settings.
 
 | Improvement | Where it applies |
 | --- | --- |
-| AI response speed and faster route finding | Host |
+| AI response speed, seamless action transitions, and faster route finding | Host |
 | Shooting response and smoother movement | Each installed player, locally |
 | Automatic responsiveness improvements | Each installed player where relevant |
 
@@ -82,7 +84,7 @@ The **AI response speed** presets map to 60 tasks per second for Original, 300 f
 
 `EnemyManager:_update_queued_tasks` normally executes at most one delayed callback per frame. AI Overdrive snapshots callbacks that are already overdue, lets the original update run, and then drains captured callbacks that are still registered and still overdue. Chronological and equal-time FIFO ordering follows the live queue, including when a callback reschedules another captured callback during the drain. Cancelled callbacks and callbacks rescheduled into the future are skipped; a captured callback rescheduled to a time that is still overdue remains eligible. Callbacks created during the drain wait until the next update.
 
-When `CopLogicBase` submits a task ID that its current logic has already queued, the existing entry is refreshed through `EnemyManager:update_queue_task` instead of appending a duplicate. New task IDs still use the original queue implementation.
+When `CopLogicBase` submits a task ID that its current logic has already queued, AI Overdrive removes the old entry before submitting the replacement instead of appending a duplicate. New task IDs still use the original queue implementation.
 
 ### Attention and visibility
 
@@ -91,6 +93,10 @@ Equivalent `AIAttentionObject:get_attention` queries share cached matches and mi
 The original visibility scan refreshes one valid LOD-priority entry per frame. AI Overdrive continues from the original round-robin position for up to eight total entries while a separate time budget remains. The budget is 5% of the current real frame duration, clamped between 0.25 and 1.5 milliseconds. Original ranking, slot limits, occlusion handling, and visibility transitions remain intact.
 
 ### Paths and actions
+
+With **Seamless action transitions** enabled, AI Overdrive remembers only the current logic's main decision task: its `queued_update`, or the sniper logic's combined detection/decision update. When an action expires naturally, that existing task is marked due and `asap`; the normal AI scheduler runs it at its next opportunity instead of waiting for the original polling interval, which ranges from fractions of a second to several seconds. The completion callback never executes AI logic directly, so movement state is not re-entered while it is still finishing the old action. The update then requeues itself with its original interval.
+
+The same option removes the base game's ordinary movement pauses: the 2–2.5 second arrest-action gate, the 2–8 second pause between civilian flee legs, and cover dwell between travel or flee path segments. It does not change animation duration, reload or hurt recovery, mission action timeouts, path-failure backoff, combat cover timing, or dodge, tase, and spooc-attack cooldowns. Interrupted actions do not trigger an extra decision update, although any ordinary movement delay written by the interrupted action is cleared.
 
 With **Faster route finding** enabled, the original coarse path update starts the first search, then AI Overdrive processes more queued searches in FIFO order. Work is limited to searches present at the start of the frame, a maximum of eight searches, and a budget equal to 5% of the current real frame duration clamped between 0.25 and 1.5 milliseconds. Turning the option off restores the original one-search-per-frame limit.
 
@@ -102,12 +108,12 @@ Walking actions normally update every 1, 2, 3, or 4 frames depending on visibili
 
 ## Compatibility
 
-AI Overdrive uses SuperBLT hooks around the enemy manager, navigation manager, attention objects, `CopLogicBase`, shooting actions, walking actions, and NPC weapons. It minimally replaces `AIAttentionObject.get_attention`, `CopLogicBase.queue_task`, `NewNPCRaycastWeaponBase.trigger_held`, and `NPCRaycastWeaponBase.trigger_held`; the scheduler update, visibility scan, path-search algorithm, and action update functions remain intact.
+AI Overdrive uses SuperBLT hooks around the enemy manager, navigation manager, attention objects, `CopLogicBase`, `CopBrain`, arrest logic, shooting actions, walking actions, and NPC weapons. It minimally replaces `AIAttentionObject.get_attention`, `CopLogicBase.queue_task`, `NewNPCRaycastWeaponBase.trigger_held`, and `NPCRaycastWeaponBase.trigger_held`; action completion and arrest entry use post-hooks, while the scheduler update, visibility scan, path-search algorithm, and action update functions remain intact.
 
 Conflicts may occur with mods that:
 
 - Change `EnemyManager._tick_rate`
-- Replace `_update_queued_tasks`, `_update_gfx_lod`, `AIAttentionObject.get_attention`, `CopLogicBase.queue_task`, `CopActionShoot.update`, `CopActionWalk.update`, or either NPC weapon `trigger_held` implementation
+- Replace `_update_queued_tasks`, `_update_gfx_lod`, `AIAttentionObject.get_attention`, `CopLogicBase.queue_task`, `CopBrain.action_complete_clbk`, `CopLogicArrest.enter`, `CopActionShoot.update`, `CopActionWalk.update`, or either NPC weapon `trigger_held` implementation
 - Change delayed-callback ordering, visibility-LOD priority arrays, coarse-search queue consumption, or action `_skipped_frames`
 - Mutate attention settings without using the standard attention-data methods
 

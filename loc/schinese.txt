@@ -8,6 +8,8 @@
   "ai_overdrive_tasks_per_second_balanced": "均衡（推荐）",
   "ai_overdrive_tasks_per_second_fast": "快速",
   "ai_overdrive_tasks_per_second_maximum": "极致",
+  "ai_overdrive_seamless_action_transitions_title": "无缝动作衔接",
+  "ai_overdrive_seamless_action_transitions_desc": "AI 完成动作后立即进入下一次决策，并移除普通移动路径段之间的停顿；不改变动画时长和特殊能力冷却。",
   "ai_overdrive_coarse_path_batching_title": "更快找到路线",
   "ai_overdrive_coarse_path_batching_desc": "多个 AI 同时请求路线时，减少粗略寻路的排队等待。",
   "ai_overdrive_shooting_update_rate_title": "射击反应",
