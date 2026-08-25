@@ -95,7 +95,7 @@ When `CopLogicBase` submits a task ID that its current logic has already queued,
 
 Equivalent `AIAttentionObject:get_attention` queries share cached matches and misses. Cache keys include the exact access filter, reaction range, and resolved friend-or-foe relationship. Standard attention mutations clear the cache, and uncached queries still use the original selector unchanged.
 
-The original visibility scan refreshes one valid LOD-priority entry per frame. AI Overdrive continues from the original round-robin position for up to eight total entries while a separate time budget remains. The budget is 5% of the current real frame duration, clamped between 0.25 and 1.5 milliseconds. Original ranking, slot limits, occlusion handling, and visibility transitions remain intact.
+The original visibility scan checks every hidden unit each frame before refreshing one valid LOD-priority entry. AI Overdrive keeps that cadence but tests the activation frustum first, so hidden units outside the view do not also query navigation visibility or `Unit.occluded`. It then continues from the original round-robin position for up to eight total priority entries while a separate time budget remains. The budget is 5% of the current real frame duration, clamped between 0.25 and 1.5 milliseconds. Original frustum thresholds, ranking, slot limits, occlusion handling, and visibility transitions remain intact.
 
 ### Paths and actions
 
@@ -113,7 +113,7 @@ Walking actions normally update every 1, 2, 3, or 4 frames depending on visibili
 
 ## Compatibility
 
-AI Overdrive uses SuperBLT hooks around the enemy manager, navigation manager, attention objects, `CopLogicBase`, `CopBrain`, arrest logic, shooting actions, walking actions, and NPC weapons. It minimally replaces `AIAttentionObject.get_attention`, `CopLogicBase.queue_task`, `NewNPCRaycastWeaponBase.trigger_held`, and `NPCRaycastWeaponBase.trigger_held`; action completion and arrest entry use post-hooks, while the scheduler update, visibility scan, path-search algorithm, and action update functions remain intact.
+AI Overdrive uses SuperBLT hooks around the enemy manager, navigation manager, attention objects, `CopLogicBase`, `CopBrain`, arrest logic, shooting actions, walking actions, and NPC weapons. It minimally replaces `EnemyManager._update_gfx_lod`, `AIAttentionObject.get_attention`, `CopLogicBase.queue_task`, `NewNPCRaycastWeaponBase.trigger_held`, and `NPCRaycastWeaponBase.trigger_held`; action completion and arrest entry use post-hooks, while the scheduler update, path-search algorithm, and action update functions remain intact.
 
 Conflicts may occur with mods that:
 

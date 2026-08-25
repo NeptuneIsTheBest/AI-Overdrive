@@ -101,6 +101,109 @@ function AIOverdrive:patch_enemy_manager_delayed_callbacks(enemy_manager)
     )
 end
 
+function AIOverdrive:_prepare_gfx_lod_context(manager, scratch)
+    if not managers.navigation:is_data_ready() then
+        return
+    end
+
+    local camera_rot = managers.viewport:get_current_camera_rotation()
+
+    if not camera_rot then
+        return
+    end
+
+    mrot_y(camera_rot, scratch.pl_fwd)
+
+    local player = managers.player:player_unit()
+    local pl_tracker
+    local cam_pos
+
+    if player then
+        local movement = player:movement()
+
+        pl_tracker = movement:nav_tracker()
+        cam_pos = movement:m_head_pos()
+    else
+        pl_tracker = false
+        cam_pos = managers.viewport:get_current_camera_position()
+    end
+
+    local gfx_lod_data = manager._gfx_lod_data
+    local entries = gfx_lod_data.entries
+    local states = entries.states
+    local nr_entries = #states
+    local context = scratch.context
+    local world = World
+
+    context.cam_pos = cam_pos
+    context.chk_vis_func = pl_tracker and pl_tracker.check_visibility
+    context.com = entries.com
+    context.direction = scratch.direction
+    context.gfx_lod_data = gfx_lod_data
+    context.nr_entries = nr_entries
+    context.occ_skip_units = managers.occlusion._skip_occlusion
+    context.pl_fwd = scratch.pl_fwd
+    context.pl_tracker = pl_tracker
+    context.states = states
+    context.trackers = entries.trackers
+    context.unit_occluded = Unit.occluded
+    context.units = entries.units
+    context.world = world
+    context.world_in_view_with_options = world.in_view_with_options
+
+    return context
+end
+
+function AIOverdrive:_prepare_gfx_lod_priority_context(manager, context)
+    local gfx_lod_data = context.gfx_lod_data
+    local anim_lod = managers.user:get_setting("video_animation_lod")
+    local lod_counts = manager._nr_i_lod[anim_lod]
+
+    context.anim_lod = anim_lod
+    context.imp_i_list = gfx_lod_data.prio_i
+    context.imp_wgt_list = gfx_lod_data.prio_weights
+    context.nr_lod_1 = lod_counts[1]
+    context.nr_lod_total = lod_counts[1] + lod_counts[2]
+end
+
+function AIOverdrive:_activate_gfx_lod_entries_in_view(context)
+    local states = context.states
+    local units = context.units
+    local world = context.world
+    local world_in_view_with_options = context.world_in_view_with_options
+    local pl_tracker = context.pl_tracker
+    local chk_vis_func = context.chk_vis_func
+    local unit_occluded = context.unit_occluded
+    local occ_skip_units = context.occ_skip_units
+
+    for i, state in ipairs(states) do
+        local unit = units[i]
+
+        if not state
+            and alive(unit)
+            and world_in_view_with_options(
+                world,
+                context.com[i],
+                0,
+                110,
+                18000
+            )
+        then
+            local occlusion_skipped = occ_skip_units[unit:key()]
+
+            if occlusion_skipped
+                or (
+                    (not pl_tracker or chk_vis_func(pl_tracker, context.trackers[i]))
+                    and not unit_occluded(unit)
+                )
+            then
+                states[i] = 1
+                unit:base():set_visibility_state(1)
+            end
+        end
+    end
+end
+
 function AIOverdrive:_refresh_gfx_lod_priority_entry(manager, context, i)
     local states = context.states
     local units = context.units
@@ -230,78 +333,74 @@ function AIOverdrive:_refresh_gfx_lod_priority_entry(manager, context, i)
     return true
 end
 
+function AIOverdrive:_refresh_next_gfx_lod_priority_entry(manager, context)
+    local nr_entries = context.nr_entries
+
+    if nr_entries == 0 then
+        return false
+    end
+
+    local gfx_lod_data = context.gfx_lod_data
+    local i = gfx_lod_data.next_chk_prio_i
+
+    if nr_entries < i then
+        i = 1
+    end
+
+    local start_i = i
+
+    repeat
+        if self:_refresh_gfx_lod_priority_entry(manager, context, i) then
+            gfx_lod_data.next_chk_prio_i = i + 1
+
+            return true
+        end
+
+        i = i == nr_entries and 1 or i + 1
+    until i == start_i
+
+    return false
+end
+
+function AIOverdrive:update_gfx_lod(manager, scratch)
+    local context = self:_prepare_gfx_lod_context(manager, scratch)
+
+    if not context then
+        return
+    end
+
+    self:_activate_gfx_lod_entries_in_view(context)
+    context.nr_entries = #context.states
+
+    if context.nr_entries == 0 then
+        return
+    end
+
+    self:_prepare_gfx_lod_priority_context(manager, context)
+    self:_refresh_next_gfx_lod_priority_entry(manager, context)
+end
+
 function AIOverdrive:continue_gfx_lod_priority_updates(manager, scratch)
-    if not managers.navigation:is_data_ready() then
+    local context = self:_prepare_gfx_lod_context(manager, scratch)
+
+    if not context then
         return 0
     end
 
-    local camera_rot = managers.viewport:get_current_camera_rotation()
-
-    if not camera_rot then
-        return 0
-    end
-
-    mrot_y(camera_rot, scratch.pl_fwd)
-
-    local player = managers.player:player_unit()
-    local pl_tracker
-    local cam_pos
-
-    if player then
-        local movement = player:movement()
-
-        pl_tracker = movement:nav_tracker()
-        cam_pos = movement:m_head_pos()
-    else
-        pl_tracker = false
-        cam_pos = managers.viewport:get_current_camera_position()
-    end
-
-    local gfx_lod_data = manager._gfx_lod_data
-    local entries = gfx_lod_data.entries
-    local units = entries.units
-    local states = entries.states
-    local trackers = entries.trackers
-    local com = entries.com
-
-    local nr_entries = #states
+    local nr_entries = context.nr_entries
 
     if nr_entries <= 1 then
         return 0
     end
 
+    self:_prepare_gfx_lod_priority_context(manager, context)
+
+    local gfx_lod_data = context.gfx_lod_data
     local next_i = gfx_lod_data.next_chk_prio_i
 
     if nr_entries < next_i then
         next_i = 1
     end
-
-    local anim_lod = managers.user:get_setting("video_animation_lod")
-    local lod_counts = manager._nr_i_lod[anim_lod]
-    local imp_i_list = gfx_lod_data.prio_i
-    local imp_wgt_list = gfx_lod_data.prio_weights
-    local chk_vis_func = pl_tracker and pl_tracker.check_visibility
-    local context = scratch.context
-    local world = World
-
-    context.anim_lod = anim_lod
-    context.cam_pos = cam_pos
-    context.chk_vis_func = chk_vis_func
-    context.com = com
-    context.direction = scratch.direction
-    context.imp_i_list = imp_i_list
-    context.imp_wgt_list = imp_wgt_list
-    context.nr_lod_1 = lod_counts[1]
-    context.nr_lod_total = lod_counts[1] + lod_counts[2]
-    context.occ_skip_units = managers.occlusion._skip_occlusion
-    context.pl_fwd = scratch.pl_fwd
-    context.pl_tracker = pl_tracker
-    context.states = states
-    context.trackers = trackers
-    context.unit_occluded = Unit.occluded
-    context.units = units
-    context.world = world
-    context.world_in_view_with_options = world.in_view_with_options
 
     local max_additional_updates = math.min(
         nr_entries - 1,
@@ -336,6 +435,14 @@ function AIOverdrive:patch_enemy_manager_gfx_lod(enemy_manager)
         direction = Vector3(),
         pl_fwd = Vector3()
     }
+
+    Hooks:OverrideFunction(
+        enemy_manager,
+        "_update_gfx_lod",
+        function(manager)
+            ai_overdrive:update_gfx_lod(manager, scratch)
+        end
+    )
 
     Hooks:PostHook(
         enemy_manager,
