@@ -8,13 +8,174 @@ if AIOverdrive._runtime_loaded then
 end
 
 local mrot_y = mrotation.y
+local mvec3_add = mvector3.add
+local mvec3_angle = mvector3.angle
+local mvec3_copy = mvector3.copy
+local mvec3_cross = mvector3.cross
 local mvec3_dir = mvector3.direction
+local mvec3_dis = mvector3.distance
 local mvec3_dot = mvector3.dot
+local mvec3_mul = mvector3.multiply
+local mvec3_set = mvector3.set
+local mvec3_set_length = mvector3.set_length
+local mvec3_set_z = mvector3.set_z
+local mvec3_sub = mvector3.subtract
+local attention_tmp_vec1 = Vector3()
 
 AIOverdrive._npc_weapon_trigger_patch_targets = AIOverdrive._npc_weapon_trigger_patch_targets
     or setmetatable({}, { __mode = "k" })
 AIOverdrive._attention_cache_no_match = AIOverdrive._attention_cache_no_match or {}
 AIOverdrive._attention_cache_nil_filter = AIOverdrive._attention_cache_nil_filter or {}
+
+local function _adjust_enemy_manager_queue_scan_cursors(manager, removed_index)
+    local scan_depth = manager._ai_overdrive_queue_scan_depth
+
+    if not scan_depth or scan_depth == 0 then
+        return
+    end
+
+    local scan_cursors = manager._ai_overdrive_queue_scan_cursors
+
+    for depth = 1, scan_depth do
+        local cursor = scan_cursors[depth]
+
+        if cursor and removed_index < cursor then
+            scan_cursors[depth] = cursor - 1
+        end
+    end
+end
+
+local function _enemy_manager_unqueue_task(manager, id)
+    local tasks = manager._queued_tasks
+    local task_index = #tasks
+
+    while task_index > 0 do
+        if tasks[task_index].id == id then
+            table.remove(tasks, task_index)
+            _adjust_enemy_manager_queue_scan_cursors(manager, task_index)
+
+            return
+        end
+
+        task_index = task_index - 1
+    end
+end
+
+local function _enemy_manager_execute_queued_task(manager, task_index)
+    local task = table.remove(manager._queued_tasks, task_index)
+
+    _adjust_enemy_manager_queue_scan_cursors(manager, task_index)
+
+    manager._queued_task_executed = true
+
+    if task.v_cb then
+        task.v_cb(task.id)
+    end
+
+    task.clbk(task.data)
+end
+
+local function _begin_enemy_manager_queue_scan(manager)
+    local scan_cursors = manager._ai_overdrive_queue_scan_cursors
+
+    if not scan_cursors then
+        scan_cursors = {}
+        manager._ai_overdrive_queue_scan_cursors = scan_cursors
+    end
+
+    local scan_depth = (manager._ai_overdrive_queue_scan_depth or 0) + 1
+
+    manager._ai_overdrive_queue_scan_depth = scan_depth
+    scan_cursors[scan_depth] = 1
+
+    return scan_cursors, scan_depth
+end
+
+local function _end_enemy_manager_queue_scan(manager, scan_cursors, scan_depth)
+    scan_cursors[scan_depth] = nil
+    manager._ai_overdrive_queue_scan_depth = scan_depth - 1
+end
+
+local function _enemy_manager_update_queued_tasks(manager, t, dt)
+    manager._queue_buffer = manager._queue_buffer + dt
+
+    local i_asap_task
+    local tick_rate = manager._tick_rate
+    local queued_tasks = manager._queued_tasks
+
+    if tick_rate <= manager._queue_buffer then
+        local scan_cursors, scan_depth = _begin_enemy_manager_queue_scan(manager)
+
+        while true do
+            local task_index = scan_cursors[scan_depth]
+            local task_data = queued_tasks[task_index]
+
+            if not task_data then
+                break
+            end
+
+            scan_cursors[scan_depth] = task_index + 1
+
+            if t > task_data.t then
+                manager._queue_buffer = manager._queue_buffer - tick_rate
+
+                local stop = manager._queue_buffer <= 0
+
+                manager:_execute_queued_task(task_index)
+
+                if stop then
+                    break
+                end
+            elseif not i_asap_task and task_data.asap then
+                i_asap_task = task_index
+            end
+        end
+
+        _end_enemy_manager_queue_scan(manager, scan_cursors, scan_depth)
+    end
+
+    if i_asap_task and not manager._queued_task_executed then
+        manager._queue_buffer = manager._queue_buffer - tick_rate
+
+        manager:_execute_queued_task(i_asap_task)
+    end
+
+    manager._queue_buffer = #queued_tasks == 0
+        and 0
+        or math.min(manager._queue_buffer, tick_rate * #queued_tasks)
+
+    local next_callback = manager._delayed_clbks[#manager._delayed_clbks]
+
+    if next_callback and t > next_callback[2] then
+        local clbk = table.remove(manager._delayed_clbks)[3]
+
+        clbk()
+    end
+end
+
+function AIOverdrive:patch_enemy_manager_task_scheduler(enemy_manager)
+    if self._enemy_manager_task_scheduler_patch_target == enemy_manager then
+        return
+    end
+
+    Hooks:OverrideFunction(
+        enemy_manager,
+        "unqueue_task",
+        _enemy_manager_unqueue_task
+    )
+    Hooks:OverrideFunction(
+        enemy_manager,
+        "_execute_queued_task",
+        _enemy_manager_execute_queued_task
+    )
+    Hooks:OverrideFunction(
+        enemy_manager,
+        "_update_queued_tasks",
+        _enemy_manager_update_queued_tasks
+    )
+
+    self._enemy_manager_task_scheduler_patch_target = enemy_manager
+end
 
 function AIOverdrive:patch_enemy_manager_delayed_callbacks(enemy_manager)
     Hooks:PreHook(
@@ -602,6 +763,723 @@ function AIOverdrive:patch_ai_attention_object(ai_attention_object)
     )
 
     self._ai_attention_object_patch_target = ai_attention_object
+end
+
+local function _attention_angle_check(
+    movement,
+    my_head_fwd,
+    my_pos,
+    detection,
+    attention_pos,
+    dis,
+    strictness
+)
+    mvec3_dir(attention_tmp_vec1, my_pos, attention_pos)
+
+    if not my_head_fwd then
+        my_head_fwd = movement:m_head_rot():z()
+    end
+
+    local angle = mvec3_angle(my_head_fwd, attention_tmp_vec1)
+    local angle_max = math.lerp(
+        180,
+        detection.angle_max,
+        math.clamp((dis - 150) / 700, 0, 1)
+    )
+
+    if angle_max > angle * strictness then
+        return true, my_head_fwd
+    end
+
+    return nil, my_head_fwd
+end
+
+local function _attention_angle_and_distance_check(
+    movement,
+    my_head_fwd,
+    my_pos,
+    detection,
+    handler,
+    settings,
+    attention_pos
+)
+    attention_pos = attention_pos or handler:get_detection_m_pos()
+
+    local dis = mvec3_dir(attention_tmp_vec1, my_pos, attention_pos)
+    local max_dis = math.min(
+        detection.dis_max,
+        settings.max_range or detection.dis_max
+    )
+    local settings_detection = settings.detection
+
+    if settings_detection and settings_detection.range_mul then
+        max_dis = max_dis * settings_detection.range_mul
+    end
+
+    local dis_multiplier = dis / max_dis
+
+    if settings.uncover_range
+        and detection.use_uncover_range
+        and dis < settings.uncover_range
+    then
+        return -1, 0, my_head_fwd
+    end
+
+    if dis_multiplier < 1 then
+        if settings.notice_requires_FOV then
+            if not my_head_fwd then
+                my_head_fwd = movement:m_head_rot():z()
+            end
+
+            local angle = mvec3_angle(my_head_fwd, attention_tmp_vec1)
+
+            if angle < 55
+                and not detection.use_uncover_range
+                and settings.uncover_range
+                and dis < settings.uncover_range
+            then
+                return -1, 0, my_head_fwd
+            end
+
+            local angle_max = math.lerp(
+                180,
+                detection.angle_max,
+                math.clamp((dis - 150) / 700, 0, 1)
+            )
+            local angle_multiplier = angle / angle_max
+
+            if angle_multiplier < 1 then
+                return angle, dis_multiplier, my_head_fwd
+            end
+        else
+            return 0, dis_multiplier, my_head_fwd
+        end
+    end
+
+    return nil, nil, my_head_fwd
+end
+
+local function _attention_nearly_visible_check(
+    attention_info,
+    detect_pos,
+    my_pos,
+    visibility_slotmask,
+    world
+)
+    local near_pos = attention_tmp_vec1
+    local max_distance = 2000
+
+    if max_distance > attention_info.verified_dis
+        and math.abs(detect_pos.z - my_pos.z) < 300
+    then
+        mvec3_set(near_pos, detect_pos)
+
+        local height_over_target = math.lerp(
+            100,
+            10,
+            math.max(attention_info.verified_dis / max_distance)
+        )
+
+        mvec3_set_z(near_pos, near_pos.z + height_over_target)
+
+        local near_vis_ray = world:raycast(
+            "ray",
+            my_pos,
+            near_pos,
+            "slot_mask",
+            visibility_slotmask,
+            "ray_type",
+            "ai_vision",
+            "report"
+        )
+
+        if near_vis_ray then
+            local side_vec = attention_tmp_vec1
+
+            mvec3_set(side_vec, detect_pos)
+            mvec3_sub(side_vec, my_pos)
+            mvec3_cross(side_vec, side_vec, math.UP)
+            mvec3_set_length(side_vec, 150)
+            mvec3_set(near_pos, detect_pos)
+            mvec3_add(near_pos, side_vec)
+
+            local near_vis_ray = world:raycast(
+                "ray",
+                my_pos,
+                near_pos,
+                "slot_mask",
+                visibility_slotmask,
+                "ray_type",
+                "ai_vision",
+                "report"
+            )
+
+            if near_vis_ray then
+                mvec3_mul(side_vec, -2)
+                mvec3_add(near_pos, side_vec)
+
+                near_vis_ray = world:raycast(
+                    "ray",
+                    my_pos,
+                    near_pos,
+                    "slot_mask",
+                    visibility_slotmask,
+                    "ray_type",
+                    "ai_vision",
+                    "report"
+                )
+            end
+        end
+
+        if not near_vis_ray then
+            attention_info.nearly_visible = true
+            attention_info.last_verified_pos = mvec3_copy(near_pos)
+        end
+    end
+end
+
+local function _record_acquired_attention_importance_weight(
+    player_importance_wgt,
+    attention_info,
+    attention_unit,
+    attention_movement,
+    my_pos
+)
+    if not player_importance_wgt or not attention_info.is_human_player then
+        return
+    end
+
+    attention_movement = attention_movement or attention_unit:movement()
+
+    local weight = mvec3_dir(
+        attention_tmp_vec1,
+        attention_info.m_head_pos,
+        my_pos
+    )
+    local e_fwd = attention_movement:detect_look_dir()
+    local dot = mvec3_dot(e_fwd, attention_tmp_vec1)
+
+    weight = weight * weight * (1 - dot)
+
+    local report_index = #player_importance_wgt
+
+    player_importance_wgt[report_index + 1] = attention_info.u_key
+    player_importance_wgt[report_index + 2] = weight
+end
+
+local function _record_attention_object_importance_weight(
+    player_importance_wgt,
+    u_key,
+    attention_info,
+    my_pos
+)
+    if not player_importance_wgt then
+        return
+    end
+
+    local attention_unit = attention_info.unit
+    local attention_base = attention_unit:base()
+    local is_local_player
+    local is_husk_player
+
+    if attention_base then
+        is_local_player = attention_base.is_local_player
+        is_husk_player = not is_local_player and attention_base.is_husk_player
+    end
+
+    if not (is_local_player or is_husk_player) then
+        return
+    end
+
+    local weight = mvec3_dir(
+        attention_tmp_vec1,
+        attention_info.handler:get_detection_m_pos(),
+        my_pos
+    )
+    local attention_movement = attention_unit:movement()
+    local e_fwd = attention_movement:detect_look_dir()
+    local dot = mvec3_dot(e_fwd, attention_tmp_vec1)
+
+    weight = weight * weight * (1 - dot)
+
+    local report_index = #player_importance_wgt
+
+    player_importance_wgt[report_index + 1] = u_key
+    player_importance_wgt[report_index + 2] = weight
+end
+
+local function _upd_attention_obj_detection(data, min_reaction, max_reaction)
+    local t = data.t
+    local detected_obj = data.detected_attention_objects
+    local my_data = data.internal_data
+    local my_key = data.key
+    local my_unit = data.unit
+    local movement = my_unit:movement()
+    local my_pos = movement:m_head_pos()
+    local my_access = data.SO_access
+    local team = data.team
+    local group_state = managers.groupai:state()
+    local all_attention_objects = group_state:get_AI_attention_objects_by_filter(
+        data.SO_access_str,
+        team
+    )
+    local my_head_fwd
+    local my_tracker = movement:nav_tracker()
+    local chk_vis_func = my_tracker.check_visibility
+    local is_detection_persistent = group_state:is_detection_persistent()
+    local delay = 2
+    local player_importance_wgt =
+        my_unit:in_slot(managers.slot:get_mask("enemies")) and {}
+    local detection = my_data.detection
+    local visibility_slotmask = data.visibility_slotmask
+    local world = World
+    local cop_logic_base = CopLogicBase
+
+    for u_key, attention_info in pairs(all_attention_objects) do
+        if u_key ~= my_key
+            and not detected_obj[u_key]
+            and (
+                not attention_info.nav_tracker
+                or chk_vis_func(my_tracker, attention_info.nav_tracker)
+            )
+        then
+            local settings = attention_info.handler:get_attention(
+                my_access,
+                min_reaction,
+                max_reaction,
+                team
+            )
+
+            if settings then
+                local acquired
+                local attention_pos =
+                    attention_info.handler:get_detection_m_pos()
+                local angle
+                local dis_multiplier
+
+                angle, dis_multiplier, my_head_fwd =
+                    _attention_angle_and_distance_check(
+                        movement,
+                        my_head_fwd,
+                        my_pos,
+                        detection,
+                        attention_info.handler,
+                        settings,
+                        attention_pos
+                    )
+
+                if angle then
+                    local vis_ray = world:raycast(
+                        "ray",
+                        my_pos,
+                        attention_pos,
+                        "slot_mask",
+                        visibility_slotmask,
+                        "ray_type",
+                        "ai_vision"
+                    )
+
+                    if not vis_ray or vis_ray.unit:key() == u_key then
+                        acquired = true
+                        detected_obj[u_key] =
+                            cop_logic_base._create_detected_attention_object_data(
+                                t,
+                                my_unit,
+                                u_key,
+                                attention_info,
+                                settings
+                            )
+                    end
+                end
+
+                if not acquired then
+                    _record_attention_object_importance_weight(
+                        player_importance_wgt,
+                        u_key,
+                        attention_info,
+                        my_pos
+                    )
+                end
+            end
+        end
+    end
+
+    for u_key, attention_info in pairs(detected_obj) do
+        local attention_unit = attention_info.unit
+        local attention_movement
+
+        if t < attention_info.next_verify_t then
+            if attention_info.reaction >= AIAttentionObject.REACT_SUSPICIOUS then
+                delay = math.min(attention_info.next_verify_t - t, delay)
+            end
+        else
+            attention_info.next_verify_t = t
+                + (
+                    attention_info.identified
+                    and attention_info.verified
+                    and attention_info.settings.verification_interval
+                    or attention_info.settings.notice_interval
+                    or attention_info.settings.verification_interval
+                )
+            delay = math.min(
+                delay,
+                attention_info.settings.verification_interval
+            )
+
+            if not attention_info.identified then
+                local noticable
+                local angle
+                local dis_multiplier
+
+                angle, dis_multiplier, my_head_fwd =
+                    _attention_angle_and_distance_check(
+                        movement,
+                        my_head_fwd,
+                        my_pos,
+                        detection,
+                        attention_info.handler,
+                        attention_info.settings
+                    )
+
+                if angle then
+                    local attention_pos =
+                        attention_info.handler:get_detection_m_pos()
+                    local vis_ray = world:raycast(
+                        "ray",
+                        my_pos,
+                        attention_pos,
+                        "slot_mask",
+                        visibility_slotmask,
+                        "ray_type",
+                        "ai_vision"
+                    )
+
+                    if not vis_ray or vis_ray.unit:key() == u_key then
+                        noticable = true
+                    end
+                end
+
+                local delta_prog
+                local dt = t - attention_info.prev_notice_chk_t
+
+                if noticable then
+                    if angle == -1 then
+                        if attention_info.is_husk_player then
+                            local peer = managers.network:session():peer_by_unit(
+                                attention_unit
+                            )
+                            local latency =
+                                peer and Network:qos(peer:rpc()).ping or nil
+
+                            if latency then
+                                delta_prog = dt / (latency / 1000) + 0.02
+                            else
+                                delta_prog = 0
+                            end
+                        else
+                            delta_prog = 1
+                        end
+                    else
+                        local min_delay = detection.delay[1]
+                        local max_delay = detection.delay[2]
+                        local angle_mul_mod = 0.25
+                            * math.min(angle / detection.angle_max, 1)
+                        local dis_mul_mod = 0.75 * dis_multiplier
+                        local notice_delay_mul =
+                            attention_info.settings.notice_delay_mul or 1
+                        local settings_detection =
+                            attention_info.settings.detection
+
+                        if settings_detection
+                            and settings_detection.delay_mul
+                        then
+                            notice_delay_mul = notice_delay_mul
+                                * settings_detection.delay_mul
+                        end
+
+                        local notice_delay_modified = math.lerp(
+                            min_delay * notice_delay_mul,
+                            max_delay,
+                            dis_mul_mod + angle_mul_mod
+                        )
+
+                        if attention_info.is_husk_player then
+                            local peer = managers.network:session():peer_by_unit(
+                                attention_unit
+                            )
+                            local latency =
+                                peer and Network:qos(peer:rpc()).ping or nil
+
+                            if latency then
+                                notice_delay_modified =
+                                    notice_delay_modified
+                                    + latency / 1000
+                                    + 0.02
+                            else
+                                delta_prog = 0
+                            end
+                        end
+
+                        delta_prog = delta_prog
+                            or notice_delay_modified > 0
+                                and dt / notice_delay_modified
+                            or 1
+                    end
+                else
+                    delta_prog = dt * -0.125
+                end
+
+                attention_info.notice_progress =
+                    attention_info.notice_progress + delta_prog
+
+                if attention_info.notice_progress > 1 then
+                    attention_info.notice_progress = nil
+                    attention_info.prev_notice_chk_t = nil
+                    attention_info.identified = true
+                    attention_info.release_t =
+                        t + attention_info.settings.release_delay
+                    attention_info.identified_t = t
+                    noticable = true
+
+                    data.logic.on_attention_obj_identified(
+                        data,
+                        u_key,
+                        attention_info
+                    )
+                elseif attention_info.notice_progress < 0 then
+                    cop_logic_base._destroy_detected_attention_object_data(
+                        data,
+                        attention_info
+                    )
+
+                    noticable = false
+                else
+                    noticable = attention_info.notice_progress
+                    attention_info.prev_notice_chk_t = t
+
+                    if data.cool
+                        and attention_info.settings.reaction
+                            >= AIAttentionObject.REACT_SCARED
+                    then
+                        group_state:on_criminal_suspicion_progress(
+                            attention_unit,
+                            my_unit,
+                            noticable
+                        )
+                    end
+                end
+
+                if noticable ~= false
+                    and attention_info.settings.notice_clbk
+                then
+                    attention_info.settings.notice_clbk(my_unit, noticable)
+                end
+            end
+
+            if attention_info.identified then
+                delay = math.min(
+                    delay,
+                    attention_info.settings.verification_interval
+                )
+                attention_info.nearly_visible = nil
+
+                local verified
+                local vis_ray
+                local attention_pos =
+                    attention_info.handler:get_detection_m_pos()
+                local dis = mvec3_dis(data.m_pos, attention_info.m_pos)
+
+                if dis < detection.dis_max * 1.2
+                    and (
+                        not attention_info.settings.max_range
+                        or dis
+                            < attention_info.settings.max_range
+                                * (
+                                    attention_info.settings.detection
+                                    and attention_info.settings.detection.range_mul
+                                    or 1
+                                )
+                                * 1.2
+                    )
+                then
+                    local detect_pos
+
+                    if attention_info.is_husk_player
+                        and attention_unit:anim_data().crouch
+                    then
+                        detect_pos = attention_tmp_vec1
+
+                        mvec3_set(detect_pos, attention_info.m_pos)
+                        mvec3_add(
+                            detect_pos,
+                            tweak_data.player.stances.default.crouched.head.translation
+                        )
+                    else
+                        detect_pos = attention_pos
+                    end
+
+                    local in_FOV =
+                        not attention_info.settings.notice_requires_FOV
+
+                    if not in_FOV
+                        and data.enemy_slotmask
+                        and attention_unit:in_slot(data.enemy_slotmask)
+                    then
+                        in_FOV = true
+                    end
+
+                    if not in_FOV then
+                        in_FOV, my_head_fwd = _attention_angle_check(
+                            movement,
+                            my_head_fwd,
+                            my_pos,
+                            detection,
+                            attention_pos,
+                            dis,
+                            0.8
+                        )
+                    end
+
+                    if in_FOV then
+                        vis_ray = world:raycast(
+                            "ray",
+                            my_pos,
+                            detect_pos,
+                            "slot_mask",
+                            visibility_slotmask,
+                            "ray_type",
+                            "ai_vision"
+                        )
+
+                        if not vis_ray or vis_ray.unit:key() == u_key then
+                            verified = true
+                        end
+                    end
+
+                    attention_info.verified = verified
+                end
+
+                attention_info.dis = dis
+                attention_info.vis_ray = vis_ray and vis_ray.dis or nil
+
+                local is_ignored = false
+
+                attention_movement = attention_unit:movement()
+
+                if attention_movement and attention_movement.is_cuffed then
+                    is_ignored = attention_movement:is_cuffed()
+                end
+
+                if is_ignored then
+                    cop_logic_base._destroy_detected_attention_object_data(
+                        data,
+                        attention_info
+                    )
+                elseif verified then
+                    attention_info.release_t = nil
+                    attention_info.verified_t = t
+
+                    mvec3_set(attention_info.verified_pos, attention_pos)
+
+                    attention_info.last_verified_pos =
+                        mvec3_copy(attention_pos)
+                    attention_info.verified_dis = dis
+                elseif data.enemy_slotmask
+                    and attention_unit:in_slot(data.enemy_slotmask)
+                then
+                    if attention_info.criminal_record
+                        and attention_info.settings.reaction
+                            >= AIAttentionObject.REACT_COMBAT
+                    then
+                        if not is_detection_persistent
+                            and mvec3_dis(
+                                attention_pos,
+                                attention_info.criminal_record.pos
+                            ) > 700
+                        then
+                            cop_logic_base._destroy_detected_attention_object_data(
+                                data,
+                                attention_info
+                            )
+                        else
+                            delay = math.min(0.2, delay)
+                            attention_info.verified_pos =
+                                mvec3_copy(
+                                    attention_info.criminal_record.pos
+                                )
+                            attention_info.verified_dis = dis
+
+                            if vis_ray
+                                and data.logic._chk_nearly_visible_chk_needed(
+                                    data,
+                                    attention_info,
+                                    u_key
+                                )
+                            then
+                                _attention_nearly_visible_check(
+                                    attention_info,
+                                    attention_pos,
+                                    my_pos,
+                                    visibility_slotmask,
+                                    world
+                                )
+                            end
+                        end
+                    elseif attention_info.release_t
+                        and t > attention_info.release_t
+                    then
+                        cop_logic_base._destroy_detected_attention_object_data(
+                            data,
+                            attention_info
+                        )
+                    else
+                        attention_info.release_t =
+                            attention_info.release_t
+                            or t + attention_info.settings.release_delay
+                    end
+                elseif attention_info.release_t
+                    and t > attention_info.release_t
+                then
+                    cop_logic_base._destroy_detected_attention_object_data(
+                        data,
+                        attention_info
+                    )
+                else
+                    attention_info.release_t =
+                        attention_info.release_t
+                        or t + attention_info.settings.release_delay
+                end
+            end
+        end
+
+        _record_acquired_attention_importance_weight(
+            player_importance_wgt,
+            attention_info,
+            attention_unit,
+            attention_movement,
+            my_pos
+        )
+    end
+
+    if player_importance_wgt then
+        group_state:set_importance_weight(my_key, player_importance_wgt)
+    end
+
+    return delay
+end
+
+function AIOverdrive:patch_cop_logic_base_attention_detection(cop_logic_base)
+    if self._cop_logic_base_attention_detection_patch_target == cop_logic_base then
+        return
+    end
+
+    Hooks:OverrideFunction(
+        cop_logic_base,
+        "_upd_attention_obj_detection",
+        _upd_attention_obj_detection
+    )
+
+    self._cop_logic_base_attention_detection_patch_target = cop_logic_base
 end
 
 function AIOverdrive:patch_cop_logic_base_queue_task(cop_logic_base)

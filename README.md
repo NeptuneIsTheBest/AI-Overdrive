@@ -88,13 +88,17 @@ tick interval = 1 / configured tasks per second
 
 The **AI response speed** presets map to 60 tasks per second for Original, 300 for Light Boost, 600 for Balanced, 1200 for Fast, and 3000 for Maximum. The configured value is a ceiling, not a target. Only tasks that the game has already queued are eligible. Due tasks are processed first; when the scheduler has enough time credit and no queued task has yet run that frame, the base game may instead execute a queued `asap` task before its scheduled time. Changing the value preserves the existing queue and clears only its accumulated time credit to avoid a one-frame catch-up burst.
 
-`EnemyManager:_update_queued_tasks` normally executes at most one delayed callback per frame. AI Overdrive snapshots callbacks that are already overdue, lets the original update run, and then drains captured callbacks that are still registered and still overdue. Chronological and equal-time FIFO ordering follows the live queue, including when a callback reschedules another captured callback during the drain. Cancelled callbacks and callbacks rescheduled into the future are skipped; a captured callback rescheduled to a time that is still overdue remains eligible. Callbacks created during the drain wait until the next update.
+The task queue remains an insertion-ordered array. AI Overdrive replaces the base game's repeated restart-from-the-front scans with a reusable forward cursor, and repairs active cursors when a callback removes a task. Each task is therefore checked at most once per scheduler call without allocating a temporary `checked` table. Tasks appended by a running callback remain behind existing work and can still run in the same call when time credit remains; tasks already checked are not reconsidered until the next call.
+
+`EnemyManager:_update_queued_tasks` normally executes at most one delayed callback per frame. AI Overdrive snapshots callbacks that are already overdue, runs the scheduler update, and then drains captured callbacks that are still registered and still overdue. Chronological and equal-time FIFO ordering follows the live queue, including when a callback reschedules another captured callback during the drain. Cancelled callbacks and callbacks rescheduled into the future are skipped; a captured callback rescheduled to a time that is still overdue remains eligible. Callbacks created during the drain wait until the next update.
 
 When `CopLogicBase` submits a task ID that its current logic has already queued, AI Overdrive removes the old entry before submitting the replacement instead of appending a duplicate. New task IDs still use the original queue implementation.
 
 ### Attention and visibility
 
 Equivalent `AIAttentionObject:get_attention` queries share cached matches and misses. Cache keys include the exact access filter, reaction range, and resolved friend-or-foe relationship. Standard attention mutations clear the cache, and uncached queries still use the original selector unchanged.
+
+`CopLogicBase` attention scans reuse file-level detection helpers and cache stable unit extensions and Group AI state references for each scan. Player-importance reports append directly by array index instead of calling `table.insert`. Candidate and detected-object traversal, notice and verification timing, and all original visibility rays remain unchanged, including the three fallback rays used by the near-visible check.
 
 The original visibility scan checks every hidden unit each frame before refreshing one valid LOD-priority entry. AI Overdrive keeps that cadence but tests the activation frustum first, so hidden units outside the view do not also query navigation visibility or `Unit.occluded`. It then continues from the original round-robin position for up to eight total priority entries while a separate time budget remains. The budget is 5% of the current real frame duration, clamped between 0.25 and 1.5 milliseconds. Original frustum thresholds, ranking, slot limits, occlusion handling, and visibility transitions remain intact.
 
@@ -114,12 +118,13 @@ Walking actions normally update every 1, 2, 3, or 4 frames depending on visibili
 
 ## Compatibility
 
-AI Overdrive uses SuperBLT hooks around the enemy manager, navigation manager, attention objects, `CopLogicBase`, `CopBrain`, arrest logic, shooting actions, walking actions, and NPC weapons. It minimally replaces `EnemyManager._update_gfx_lod`, `AIAttentionObject.get_attention`, `CopLogicBase.queue_task`, the ordinary `CopActionWalk` update/path interpolation functions, `NewNPCRaycastWeaponBase.trigger_held`, and `NPCRaycastWeaponBase.trigger_held`; action completion and arrest entry use post-hooks, while the shooting scheduler and coarse path-search algorithm remain intact.
+AI Overdrive uses SuperBLT hooks around the enemy manager, navigation manager, attention objects, `CopLogicBase`, `CopBrain`, arrest logic, shooting actions, walking actions, and NPC weapons. It minimally replaces `EnemyManager._update_queued_tasks`, `EnemyManager._execute_queued_task`, `EnemyManager.unqueue_task`, `EnemyManager._update_gfx_lod`, `AIAttentionObject.get_attention`, `CopLogicBase._upd_attention_obj_detection`, `CopLogicBase.queue_task`, the ordinary `CopActionWalk` update/path interpolation functions, `NewNPCRaycastWeaponBase.trigger_held`, and `NPCRaycastWeaponBase.trigger_held`; action completion and arrest entry use post-hooks, while the shooting scheduler and coarse path-search algorithm remain intact.
 
 Conflicts may occur with mods that:
 
 - Change `EnemyManager._tick_rate`
-- Replace `_update_queued_tasks`, `_update_gfx_lod`, `AIAttentionObject.get_attention`, `CopLogicBase.queue_task`, `CopBrain.action_complete_clbk`, `CopLogicArrest.enter`, `CopActionShoot.update`, `CopActionWalk.update`, `CopActionWalk._nav_chk_walk`, `CopActionWalk._walk_spline`, or either NPC weapon `trigger_held` implementation
+- Replace `_update_queued_tasks`, `_execute_queued_task`, `unqueue_task`, `_update_gfx_lod`, `AIAttentionObject.get_attention`, `CopLogicBase._upd_attention_obj_detection`, `CopLogicBase.queue_task`, `CopBrain.action_complete_clbk`, `CopLogicArrest.enter`, `CopActionShoot.update`, `CopActionWalk.update`, `CopActionWalk._nav_chk_walk`, `CopActionWalk._walk_spline`, or either NPC weapon `trigger_held` implementation
+- Directly insert into or remove entries from `EnemyManager._queued_tasks` instead of using the manager methods
 - Change delayed-callback ordering, visibility-LOD priority arrays, coarse-search queue consumption, or action `_skipped_frames`
 - Mutate attention settings without using the standard attention-data methods
 

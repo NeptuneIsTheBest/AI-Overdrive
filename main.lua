@@ -75,6 +75,7 @@ else
     end
 
     if required_script == "lib/managers/enemymanager" then
+        AIOverdrive:patch_enemy_manager_task_scheduler(EnemyManager)
         AIOverdrive:patch_enemy_manager_delayed_callbacks(EnemyManager)
         AIOverdrive:patch_enemy_manager_gfx_lod(EnemyManager)
 
@@ -91,6 +92,7 @@ else
     elseif required_script == "lib/units/props/aiattentionobject" then
         AIOverdrive:patch_ai_attention_object(AIAttentionObject)
     elseif required_script == "lib/units/enemies/cop/logics/coplogicbase" then
+        AIOverdrive:patch_cop_logic_base_attention_detection(CopLogicBase)
         AIOverdrive:patch_cop_logic_base_queue_task(CopLogicBase)
     elseif required_script == "lib/units/enemies/cop/copbrain" then
         AIOverdrive:patch_cop_brain_action_transitions(CopBrain, CopLogicArrest)
