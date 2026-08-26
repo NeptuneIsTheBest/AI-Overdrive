@@ -26,6 +26,95 @@ AIOverdrive._npc_weapon_trigger_patch_targets = AIOverdrive._npc_weapon_trigger_
     or setmetatable({}, { __mode = "k" })
 AIOverdrive._attention_cache_no_match = AIOverdrive._attention_cache_no_match or {}
 AIOverdrive._attention_cache_nil_filter = AIOverdrive._attention_cache_nil_filter or {}
+AIOverdrive._enemy_manager_pooled_task_objects =
+    AIOverdrive._enemy_manager_pooled_task_objects
+    or setmetatable({}, { __mode = "k" })
+
+local function _recycle_enemy_manager_task(manager, task)
+    if not AIOverdrive._enemy_manager_pooled_task_objects[task] then
+        return
+    end
+
+    for key in pairs(task) do
+        task[key] = nil
+    end
+
+    local task_pool = manager._ai_overdrive_queued_task_pool
+
+    if not task_pool then
+        task_pool = {}
+        manager._ai_overdrive_queued_task_pool = task_pool
+    end
+
+    task_pool[#task_pool + 1] = task
+end
+
+local function _enemy_manager_queue_task(
+    manager,
+    id,
+    task_clbk,
+    data,
+    execute_t,
+    verification_clbk,
+    asap
+)
+    local task_pool = manager._ai_overdrive_queued_task_pool
+    local task
+
+    if task_pool then
+        local pool_size = #task_pool
+
+        if pool_size > 0 then
+            task = task_pool[pool_size]
+            task_pool[pool_size] = nil
+        end
+    end
+
+    if not task then
+        task = {}
+        AIOverdrive._enemy_manager_pooled_task_objects[task] = true
+    end
+
+    task.clbk = task_clbk
+    task.id = id
+    task.data = data
+    task.t = execute_t or 0
+    task.v_cb = verification_clbk
+    task.asap = asap
+
+    local queued_tasks = manager._queued_tasks
+
+    queued_tasks[#queued_tasks + 1] = task
+end
+
+local function _enemy_manager_update_queue_task(
+    manager,
+    id,
+    task_clbk,
+    data,
+    execute_t,
+    verification_clbk,
+    asap
+)
+    local queued_tasks = manager._queued_tasks
+    local task_index = 1
+
+    while task_index <= #queued_tasks do
+        local task = queued_tasks[task_index]
+
+        if task.id == id then
+            task.clbk = task_clbk or task.clbk
+            task.data = data or task.data
+            task.t = execute_t or task.t
+            task.v_cb = verification_clbk or task.v_cb
+            task.asap = asap or task.asap
+
+            return
+        end
+
+        task_index = task_index + 1
+    end
+end
 
 local function _adjust_enemy_manager_queue_scan_cursors(manager, removed_index)
     local scan_depth = manager._ai_overdrive_queue_scan_depth
@@ -51,8 +140,10 @@ local function _enemy_manager_unqueue_task(manager, id)
 
     while task_index > 0 do
         if tasks[task_index].id == id then
-            table.remove(tasks, task_index)
+            local task = table.remove(tasks, task_index)
+
             _adjust_enemy_manager_queue_scan_cursors(manager, task_index)
+            _recycle_enemy_manager_task(manager, task)
 
             return
         end
@@ -63,16 +154,21 @@ end
 
 local function _enemy_manager_execute_queued_task(manager, task_index)
     local task = table.remove(manager._queued_tasks, task_index)
+    local verification_clbk = task.v_cb
+    local id = task.id
+    local task_clbk = task.clbk
+    local data = task.data
 
     _adjust_enemy_manager_queue_scan_cursors(manager, task_index)
 
     manager._queued_task_executed = true
 
-    if task.v_cb then
-        task.v_cb(task.id)
+    if verification_clbk then
+        verification_clbk(id)
     end
 
-    task.clbk(task.data)
+    task_clbk(data)
+    _recycle_enemy_manager_task(manager, task)
 end
 
 local function _begin_enemy_manager_queue_scan(manager)
@@ -96,7 +192,118 @@ local function _end_enemy_manager_queue_scan(manager, scan_cursors, scan_depth)
     manager._ai_overdrive_queue_scan_depth = scan_depth - 1
 end
 
+local function _capture_enemy_manager_delayed_callbacks(manager, t)
+    if not Network:is_server() then
+        return
+    end
+
+    local delayed_callbacks = manager._delayed_clbks
+    local callback_index = #delayed_callbacks
+    local callback_data = delayed_callbacks[callback_index]
+
+    if not callback_data or not (t > callback_data[2]) then
+        return
+    end
+
+    local snapshot_pool =
+        manager._ai_overdrive_delayed_callback_snapshot_pool
+    local eligible_callbacks
+
+    if snapshot_pool and #snapshot_pool > 0 then
+        eligible_callbacks = snapshot_pool[#snapshot_pool]
+        snapshot_pool[#snapshot_pool] = nil
+    else
+        eligible_callbacks = {}
+    end
+
+    while callback_index > 0 do
+        callback_data = delayed_callbacks[callback_index]
+
+        if not (t > callback_data[2]) then
+            break
+        end
+
+        eligible_callbacks[callback_data] = true
+        callback_index = callback_index - 1
+    end
+
+    return eligible_callbacks
+end
+
+local function _release_enemy_manager_delayed_callback_snapshot(
+    manager,
+    eligible_callbacks
+)
+    for callback_data in pairs(eligible_callbacks) do
+        eligible_callbacks[callback_data] = nil
+    end
+
+    local snapshot_pool =
+        manager._ai_overdrive_delayed_callback_snapshot_pool
+
+    if not snapshot_pool then
+        snapshot_pool = {}
+        manager._ai_overdrive_delayed_callback_snapshot_pool = snapshot_pool
+    end
+
+    snapshot_pool[#snapshot_pool + 1] = eligible_callbacks
+end
+
+local function _update_enemy_manager_delayed_callbacks(
+    manager,
+    t,
+    eligible_callbacks
+)
+    local delayed_callbacks = manager._delayed_clbks
+    local next_callback = delayed_callbacks[#delayed_callbacks]
+
+    if next_callback and t > next_callback[2] then
+        local clbk = table.remove(delayed_callbacks)[3]
+
+        clbk()
+    end
+
+    if not eligible_callbacks then
+        return
+    end
+
+    while true do
+        delayed_callbacks = manager._delayed_clbks
+
+        local callback_index = #delayed_callbacks
+        local callback_data
+
+        while callback_index > 0 do
+            callback_data = delayed_callbacks[callback_index]
+
+            if eligible_callbacks[callback_data] then
+                break
+            end
+
+            callback_index = callback_index - 1
+        end
+
+        if callback_index == 0 or not (t > callback_data[2]) then
+            break
+        end
+
+        eligible_callbacks[callback_data] = nil
+
+        local clbk = table.remove(delayed_callbacks, callback_index)[3]
+
+        clbk()
+    end
+
+    _release_enemy_manager_delayed_callback_snapshot(
+        manager,
+        eligible_callbacks
+    )
+end
+
 local function _enemy_manager_update_queued_tasks(manager, t, dt)
+    local eligible_callbacks =
+        _capture_enemy_manager_delayed_callbacks(manager, t)
+
     manager._queue_buffer = manager._queue_buffer + dt
 
     local i_asap_task
@@ -144,13 +351,7 @@ local function _enemy_manager_update_queued_tasks(manager, t, dt)
         and 0
         or math.min(manager._queue_buffer, tick_rate * #queued_tasks)
 
-    local next_callback = manager._delayed_clbks[#manager._delayed_clbks]
-
-    if next_callback and t > next_callback[2] then
-        local clbk = table.remove(manager._delayed_clbks)[3]
-
-        clbk()
-    end
+    _update_enemy_manager_delayed_callbacks(manager, t, eligible_callbacks)
 end
 
 function AIOverdrive:patch_enemy_manager_task_scheduler(enemy_manager)
@@ -158,6 +359,16 @@ function AIOverdrive:patch_enemy_manager_task_scheduler(enemy_manager)
         return
     end
 
+    Hooks:OverrideFunction(
+        enemy_manager,
+        "queue_task",
+        _enemy_manager_queue_task
+    )
+    Hooks:OverrideFunction(
+        enemy_manager,
+        "update_queue_task",
+        _enemy_manager_update_queue_task
+    )
     Hooks:OverrideFunction(
         enemy_manager,
         "unqueue_task",
@@ -175,91 +386,6 @@ function AIOverdrive:patch_enemy_manager_task_scheduler(enemy_manager)
     )
 
     self._enemy_manager_task_scheduler_patch_target = enemy_manager
-end
-
-function AIOverdrive:patch_enemy_manager_delayed_callbacks(enemy_manager)
-    Hooks:PreHook(
-        enemy_manager,
-        "_update_queued_tasks",
-        "AIOverdrive_EnemyManager_UpdateQueuedTasks_CaptureDelayedCallbacks",
-        function(manager, t)
-            if not Network:is_server() then
-                return
-            end
-
-            local snapshot_stack =
-                manager._ai_overdrive_delayed_callback_snapshot_stack
-
-            if not snapshot_stack then
-                snapshot_stack = {}
-                manager._ai_overdrive_delayed_callback_snapshot_stack = snapshot_stack
-            end
-
-            local eligible_callbacks = {}
-
-            snapshot_stack[#snapshot_stack + 1] = eligible_callbacks
-
-            local delayed_callbacks = manager._delayed_clbks
-            local callback_index = #delayed_callbacks
-
-            while callback_index > 0 do
-                local callback_data = delayed_callbacks[callback_index]
-
-                if not (t > callback_data[2]) then
-                    break
-                end
-
-                eligible_callbacks[callback_data] = true
-                callback_index = callback_index - 1
-            end
-        end
-    )
-
-    Hooks:PostHook(
-        enemy_manager,
-        "_update_queued_tasks",
-        "AIOverdrive_EnemyManager_UpdateQueuedTasks_DrainDelayedCallbacks",
-        function(manager, t)
-            local snapshot_stack =
-                manager._ai_overdrive_delayed_callback_snapshot_stack
-
-            if not snapshot_stack then
-                return
-            end
-
-            local eligible_callbacks = table.remove(snapshot_stack)
-
-            if not eligible_callbacks then
-                return
-            end
-
-            while true do
-                local delayed_callbacks = manager._delayed_clbks
-                local callback_index = #delayed_callbacks
-                local callback_data
-
-                while callback_index > 0 do
-                    callback_data = delayed_callbacks[callback_index]
-
-                    if eligible_callbacks[callback_data] then
-                        break
-                    end
-
-                    callback_index = callback_index - 1
-                end
-
-                if callback_index == 0 or not (t > callback_data[2]) then
-                    break
-                end
-
-                eligible_callbacks[callback_data] = nil
-
-                local clbk = table.remove(delayed_callbacks, callback_index)[3]
-
-                clbk()
-            end
-        end
-    )
 end
 
 function AIOverdrive:_prepare_gfx_lod_context(manager, scratch)
@@ -1488,20 +1614,74 @@ function AIOverdrive:patch_cop_logic_base_queue_task(cop_logic_base)
     end
 
     local ai_overdrive = self
-    local original_queue_task = Hooks:GetFunction(cop_logic_base, "queue_task")
 
     Hooks:OverrideFunction(cop_logic_base, "queue_task", function(internal_data, id, func, data, exec_t, asap)
+        if internal_data.unit
+            and internal_data
+                ~= internal_data.unit:brain()._logic_data.internal_data
+        then
+            debug_pause(
+                "[CopLogicBase.queue_task] Task queued from the wrong logic",
+                internal_data.unit,
+                id,
+                func,
+                data,
+                exec_t,
+                asap
+            )
+        end
+
         local queued_tasks = internal_data.queued_tasks
 
-        if queued_tasks and queued_tasks[id] then
-            cop_logic_base.unqueue_task(internal_data, id)
+        if queued_tasks then
+            internal_data._ai_overdrive_queued_tasks_cache = queued_tasks
+
+            if queued_tasks[id] then
+                cop_logic_base.unqueue_task(internal_data, id)
+            end
         end
+
+        queued_tasks = internal_data.queued_tasks
+
+        if not queued_tasks then
+            queued_tasks = internal_data._ai_overdrive_queued_tasks_cache
+
+            if not queued_tasks or next(queued_tasks) then
+                queued_tasks = {}
+                internal_data._ai_overdrive_queued_tasks_cache = queued_tasks
+            end
+
+            internal_data.queued_tasks = queued_tasks
+        end
+
+        queued_tasks[id] = true
 
         if ai_overdrive:is_logic_decision_update(func, data) then
             internal_data._ai_overdrive_decision_update_id = id
         end
 
-        return original_queue_task(internal_data, id, func, data, exec_t, asap)
+        local verification_clbk =
+            internal_data._ai_overdrive_queue_verification_clbk
+
+        if not verification_clbk then
+            verification_clbk = callback(
+                cop_logic_base,
+                cop_logic_base,
+                "on_queued_task",
+                internal_data
+            )
+            internal_data._ai_overdrive_queue_verification_clbk =
+                verification_clbk
+        end
+
+        return managers.enemy:queue_task(
+            id,
+            func,
+            data,
+            exec_t,
+            verification_clbk,
+            asap
+        )
     end)
 
     self._cop_logic_base_queue_task_patch_target = cop_logic_base

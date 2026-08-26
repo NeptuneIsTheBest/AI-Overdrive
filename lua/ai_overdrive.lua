@@ -8,7 +8,7 @@ _G.AIOverdrive = existing or {}
 
 local AIOverdrive = _G.AIOverdrive
 
-AIOverdrive.VERSION = "0.2.2"
+AIOverdrive.VERSION = "0.2.3"
 AIOverdrive.TASKS_PER_SECOND_PRESETS = {
     60,
     300,

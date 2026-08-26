@@ -58,7 +58,9 @@ else
     local is_runtime_script =
         required_script == "lib/managers/enemymanager"
         or required_script == "lib/managers/navigationmanager"
+        or required_script == "lib/managers/group_ai_states/groupaistatebesiege"
         or required_script == "lib/units/props/aiattentionobject"
+        or required_script == "lib/units/equipment/sentry_gun/sentrygunbrain"
         or required_script == "lib/units/enemies/cop/logics/coplogicbase"
         or required_script == "lib/units/enemies/cop/copbrain"
         or required_script == "lib/units/enemies/cop/actions/upper_body/copactionshoot"
@@ -76,7 +78,6 @@ else
 
     if required_script == "lib/managers/enemymanager" then
         AIOverdrive:patch_enemy_manager_task_scheduler(EnemyManager)
-        AIOverdrive:patch_enemy_manager_delayed_callbacks(EnemyManager)
         AIOverdrive:patch_enemy_manager_gfx_lod(EnemyManager)
 
         Hooks:PostHook(
@@ -89,8 +90,20 @@ else
         )
     elseif required_script == "lib/managers/navigationmanager" then
         AIOverdrive:patch_navigation_manager_coarse_searches(NavigationManager)
+    elseif required_script == "lib/managers/group_ai_states/groupaistatebesiege" then
+        if not AIOverdrive._group_ai_runtime_loaded then
+            dofile(AIOverdrive.mod_path .. "lua/ai_overdrive_group_ai.lua")
+        end
+
+        AIOverdrive:patch_group_ai_state_besiege(GroupAIStateBesiege)
     elseif required_script == "lib/units/props/aiattentionobject" then
         AIOverdrive:patch_ai_attention_object(AIAttentionObject)
+    elseif required_script == "lib/units/equipment/sentry_gun/sentrygunbrain" then
+        if not AIOverdrive._sentry_runtime_loaded then
+            dofile(AIOverdrive.mod_path .. "lua/ai_overdrive_sentry.lua")
+        end
+
+        AIOverdrive:patch_sentry_gun_brain(SentryGunBrain)
     elseif required_script == "lib/units/enemies/cop/logics/coplogicbase" then
         AIOverdrive:patch_cop_logic_base_attention_detection(CopLogicBase)
         AIOverdrive:patch_cop_logic_base_queue_task(CopLogicBase)

@@ -10,10 +10,6 @@ if AIOverdrive._walk_runtime_loaded then
     return AIOverdrive
 end
 
--- Behavior baseline: PAYDAY 2 update 247.2, archive commit
--- a199705bffef53b7dbb3c1ea935b3aff5f66227b, CopActionWalk.
--- The only intentional changes are the reusable spline outputs and mutable
--- movement-direction normalization used while smoother movement is enabled.
 local mvec3_set = mvector3.set
 local mvec3_z = mvector3.z
 local mvec3_set_z = mvector3.set_z
@@ -50,21 +46,6 @@ local function stable_spline_output(output, returned_pos)
     end
 
     return output
-end
-
-local function walk_action_scratch(action)
-    local scratch = action._ai_overdrive_walk_scratch
-
-    if not scratch then
-        scratch = {
-            next_pos = Vector3()
-        }
-        action._ai_overdrive_walk_scratch = scratch
-    elseif not scratch.next_pos then
-        scratch.next_pos = Vector3()
-    end
-
-    return scratch
 end
 
 function AIOverdrive._walk_spline_into(output, path, pos, index, walk_dis)
@@ -119,7 +100,7 @@ function AIOverdrive._update_walk_action(self, t)
 
     if vis_state == 1 then
         dt = t - self._last_upd_t
-        self._last_upd_t = TimerManager:game():time()
+        self._last_upd_t = t
     elseif vis_state > self._skipped_frames then
         self._skipped_frames = self._skipped_frames + 1
 
@@ -127,7 +108,7 @@ function AIOverdrive._update_walk_action(self, t)
     else
         self._skipped_frames = 1
         dt = t - self._last_upd_t
-        self._last_upd_t = TimerManager:game():time()
+        self._last_upd_t = t
     end
 
     if self._ik_update then
@@ -543,7 +524,6 @@ function AIOverdrive._nav_chk_walk_optimized(self, t, dt, vis_state)
                         vel
                     )
                 then
-                    -- Preserve the original reservation-failure behavior.
                 end
 
                 if not s_path[1].x then
@@ -648,16 +628,16 @@ function AIOverdrive._nav_chk_walk_optimized(self, t, dt, vis_state)
             walk_dis = c_vel * dt
         end
 
-        local next_pos_output = walk_action_scratch(self).next_pos
+        local last_pos = self._last_pos
 
         new_pos, new_c_index, complete = self._walk_spline(
             c_path,
-            self._last_pos,
+            last_pos,
             c_index,
             walk_dis,
-            next_pos_output
+            last_pos
         )
-        new_pos = stable_spline_output(next_pos_output, new_pos)
+        new_pos = stable_spline_output(last_pos, new_pos)
 
         if complete then
             if self._next_is_nav_link then
@@ -754,7 +734,6 @@ function AIOverdrive._nav_chk_walk_optimized(self, t, dt, vis_state)
         end
 
         self._curve_path_index = new_c_index
-        self._last_pos = new_pos
     end
 end
 

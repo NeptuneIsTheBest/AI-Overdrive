@@ -3,7 +3,7 @@
   "description": "A lightweight enhancement mod for PAYDAY 2 AI.",
   "author": "NeptuneIsTheBest",
   "contact": "https://github.com/NeptuneIsTheBest",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "blt_version": 2,
   "color": "0.15 0.65 1",
   "hooks": [
@@ -20,7 +20,15 @@
       "script_path": "main.lua"
     },
     {
+      "hook_id": "lib/managers/group_ai_states/groupaistatebesiege",
+      "script_path": "main.lua"
+    },
+    {
       "hook_id": "lib/units/props/aiattentionobject",
+      "script_path": "main.lua"
+    },
+    {
+      "hook_id": "lib/units/equipment/sentry_gun/sentrygunbrain",
       "script_path": "main.lua"
     },
     {
