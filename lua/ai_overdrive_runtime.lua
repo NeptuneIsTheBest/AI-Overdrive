@@ -2052,31 +2052,12 @@ function AIOverdrive:end_npc_weapon_shoot_action(action)
     end
 end
 
-function AIOverdrive:npc_weapon_fire_rate(weapon_base, default_fire_rate)
-    local weapon_tweak = tweak_data.weapon[weapon_base._name_id]
-    local fire_rate = tonumber(
-        weapon_tweak
-        and weapon_tweak.auto
-        and weapon_tweak.auto.fire_rate
-    )
-
-    if not fire_rate or fire_rate <= 0 or fire_rate ~= fire_rate then
-        return default_fire_rate
-    end
-
-    return fire_rate
-end
-
 function AIOverdrive:npc_weapon_catchup_limit(weapon_base)
     local shot_limit = self.MAX_NPC_WEAPON_CATCHUP_SHOTS
     local shoot_action = weapon_base._ai_overdrive_shoot_action
 
-    if not shoot_action
-        or shoot_action._weapon_base ~= weapon_base
-        or type(shoot_action._autofiring) ~= "number"
-        or type(shoot_action._autoshots_fired) ~= "number"
-    then
-        return shot_limit
+    if not shoot_action then
+        return
     end
 
     local remaining_shots = math.max(
@@ -2087,23 +2068,37 @@ function AIOverdrive:npc_weapon_catchup_limit(weapon_base)
     return math.min(shot_limit, remaining_shots), shoot_action
 end
 
-function AIOverdrive:catch_up_npc_weapon_trigger(weapon_base, default_fire_rate, ...)
+function AIOverdrive:catch_up_npc_weapon_trigger(
+    weapon_base,
+    weapon_class,
+    first_result,
+    ...
+)
+    local shot_limit, shoot_action = self:npc_weapon_catchup_limit(weapon_base)
+
+    if not shot_limit or shot_limit <= 1 then
+        return
+    end
+
     local current_t = Application:time()
 
     if weapon_base._next_fire_allowed > current_t then
         return
     end
 
-    local fire_rate = self:npc_weapon_fire_rate(weapon_base, default_fire_rate)
-    local shot_limit, shoot_action = self:npc_weapon_catchup_limit(weapon_base)
-    local fired
-    local death_result
-    local shots_fired = 0
+    local original_trigger_held = Hooks:GetFunction(weapon_class, "trigger_held")
+    local fired = first_result
+    local death_result = first_result.hit_enemy
+        and first_result.hit_enemy.type == "death"
+        and first_result
+    local fire_rate
+    local shots_fired = 1
 
     while weapon_base._next_fire_allowed <= current_t
         and shots_fired < shot_limit
     do
-        local shot_result = weapon_base:fire(...)
+        local previous_next_fire_allowed = weapon_base._next_fire_allowed
+        local shot_result = original_trigger_held(weapon_base, ...)
 
         if not shot_result then
             break
@@ -2111,22 +2106,18 @@ function AIOverdrive:catch_up_npc_weapon_trigger(weapon_base, default_fire_rate,
 
         fired = shot_result
         shots_fired = shots_fired + 1
-        weapon_base._next_fire_allowed = weapon_base._next_fire_allowed + fire_rate
+        fire_rate = weapon_base._next_fire_allowed
+            - previous_next_fire_allowed
 
         if not death_result
-            and type(shot_result) == "table"
-            and type(shot_result.hit_enemy) == "table"
+            and shot_result.hit_enemy
             and shot_result.hit_enemy.type == "death"
         then
             death_result = shot_result
         end
     end
 
-    if shoot_action
-        and shots_fired > 1
-        and weapon_base._ai_overdrive_shoot_action == shoot_action
-        and type(shoot_action._autoshots_fired) == "number"
-    then
+    if shots_fired > 1 then
         shoot_action._autoshots_fired = shoot_action._autoshots_fired + shots_fired - 1
     end
 
@@ -2148,22 +2139,31 @@ function AIOverdrive:catch_up_npc_weapon_trigger(weapon_base, default_fire_rate,
     return death_result or fired
 end
 
-function AIOverdrive:patch_npc_weapon_trigger(weapon_class, default_fire_rate)
+function AIOverdrive:patch_npc_weapon_trigger(
+    weapon_class,
+    hook_id
+)
     if self._npc_weapon_trigger_patch_targets[weapon_class] then
         return
     end
 
     local ai_overdrive = self
-    local original_trigger_held = Hooks:GetFunction(weapon_class, "trigger_held")
 
-    Hooks:OverrideFunction(weapon_class, "trigger_held", function(weapon_base, ...)
+    Hooks:PostHook(weapon_class, "trigger_held", hook_id, function(weapon_base, ...)
         if not ai_overdrive:accelerated_shooting_enabled() then
-            return original_trigger_held(weapon_base, ...)
+            return
+        end
+
+        local first_result = Hooks:GetReturn()
+
+        if not first_result then
+            return
         end
 
         return ai_overdrive:catch_up_npc_weapon_trigger(
             weapon_base,
-            default_fire_rate,
+            weapon_class,
+            first_result,
             ...
         )
     end)
@@ -2174,14 +2174,14 @@ end
 function AIOverdrive:patch_new_npc_raycast_weapon_base(weapon_class)
     self:patch_npc_weapon_trigger(
         weapon_class,
-        self.NEW_NPC_WEAPON_DEFAULT_FIRE_RATE
+        "AIOverdrive_NewNPCRaycastWeaponBase_TriggerHeld_CatchUp"
     )
 end
 
 function AIOverdrive:patch_npc_raycast_weapon_base(weapon_class)
     self:patch_npc_weapon_trigger(
         weapon_class,
-        self.LEGACY_NPC_WEAPON_DEFAULT_FIRE_RATE
+        "AIOverdrive_NPCRaycastWeaponBase_TriggerHeld_CatchUp"
     )
 end
 
